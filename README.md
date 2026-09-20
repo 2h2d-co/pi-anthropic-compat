@@ -228,7 +228,9 @@ The default test suite and CI skip both tests.
 ## Release
 
 The shared release tooling records a package digest in a signed release commit.
-The tag workflow verifies that digest before staging an npm package.
+The tag workflow verifies that digest, attests the archive, stages it on npm,
+and creates the immutable GitHub release for the tag from the same archive and
+the version's `CHANGELOG.md` section (`Unreleased` for prereleases).
 The npm trusted publisher permits staging only and is restricted to this
 repository's `publish.yml` workflow and `npm-publish` environment. Every
 release after `0.0.1` stages through that workflow with npm provenance and
