@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The tag workflow now creates the immutable GitHub release from the verified archive and this changelog section.
+
 ## [0.0.2] - 2026-09-20
 
 ### Fixed
