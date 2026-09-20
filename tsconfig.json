@@ -1,0 +1,10 @@
+{
+  "extends": "@2h2d/ts-config/base.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": ["extensions", "oxlint.config.ts", "scripts", "test"]
+}

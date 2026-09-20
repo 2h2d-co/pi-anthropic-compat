@@ -1,0 +1,19 @@
+# Agent Instructions
+
+- This project is a Pi package with a TypeScript extension entrypoint.
+- Pi extensions run with full system permissions; keep side effects explicit and documented.
+- Keep `extensions/index.ts` thin. Compatibility behavior belongs in focused modules under `extensions/anthropic-compat/`.
+- Native compaction must fail closed. Do not silently substitute a plain-text summary after native failure.
+- Preserve exact native blocks and signatures. Never print credentials, signed block contents, or raw provider error bodies.
+- Keep final provider-payload transforms effective, including the Anthropic system-prompt patcher.
+- Full-history compaction is the initial boundary. Do not add kept-turn or background compaction without validating Anthropic's thinking-preservation contract.
+- Preserve unrelated concurrent filesystem changes. Ask only when they directly conflict with scoped work.
+- Run complete non-writing validation through `mise run check`.
+- Run `npm run check` and `npm test` before committing meaningful code changes.
+- Run `npm run pack:dry` to inspect the npm package contents before release.
+- Keep `.github/npm-package-files` synchronized with every intentional package-content change; local release validation and both CI jobs enforce it exactly.
+- Use Conventional Commits and maintain `CHANGELOG.md` in Keep a Changelog style; add entries for `feat:` and `fix:` changes under `Unreleased`.
+- Keep changelog entries under `Unreleased` for prereleases and move them into a release section only for stable releases.
+- Use `npm run release -- <version>` to build the release package locally, create an SSH-signed `release: v<version>` commit containing its `Npm-Artifact-SHA256` trailer, verify a clean rebuild, and create the matching lightweight tag.
+- Push the release commit and tag atomically; do not use `git tag -a`, `git tag -s`, `git tag -m`, or `cog bump --annotated`.
+- Push stable or prerelease `v<version>` tags and let CI build and stage the package with trusted publishing and provenance. Stable versions use `latest`; prereleases derive a non-`latest` dist-tag from their first prerelease identifier.
