@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import {
   messageHash,
   prepareRetained,
   replayRetained,
   bindingTemplate,
+  fingerprint,
 } from "../extensions/anthropic-compat/tail.ts";
 import {
   enforceThinking,
@@ -12,6 +14,11 @@ import {
   THINKING_BINDING_BETA,
 } from "../extensions/anthropic-compat/protocol.ts";
 import { object } from "../extensions/anthropic-compat/json.ts";
+
+test("request fingerprints use locale-independent key ordering", () => {
+  const expected = createHash("sha256").update('{"Z":3,"z":1,"ä":2}').digest("hex");
+  assert.equal(fingerprint({ z: 1, ä: 2, Z: 3 }), expected);
+});
 
 test("history matching ignores cache placement and JSON key order, but not tool arguments or thinking", () => {
   assert.equal(

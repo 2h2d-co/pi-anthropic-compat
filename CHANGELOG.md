@@ -17,4 +17,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Make request-boundary fingerprints independent of the machine's locale.
 - Preserve explicit effort and adaptive-thinking controls in native summary requests without retaining incompatible structured-output settings.
