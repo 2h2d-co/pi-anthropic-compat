@@ -288,6 +288,13 @@ jobs:
             echo "version=$version"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Check for an identical published package
+        id: publication
+        env:
+          PACKAGE_NAME: ${{ steps.release.outputs.package_name }}
+          PACKAGE_VERSION: ${{ steps.release.outputs.version }}
+        run: node ./scripts/check-published-release.ts
+
       - name: Attest package archive
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -296,6 +303,7 @@ jobs:
             ${{ env.checksum }}
 
       - name: Stage package on npm
+        if: steps.publication.outputs.published != 'true'
         id: stage
         shell: bash
         env:
