@@ -61,7 +61,8 @@ test(
     assert.deepEqual(files, expected);
     execFileSync("tar", ["-xzf", archive, "-C", temporary]);
     const packageRoot = join(temporary, "package");
-    await symlink(join(root, "node_modules"), join(packageRoot, "node_modules"), "dir");
+    // Installed packages have no node_modules: every pi-* import must resolve through Pi's aliases.
+    assert.equal(existsSync(join(packageRoot, "node_modules")), false);
 
     const cli = await realpath(
       process.env["PI_ANTHROPIC_CLI_PATH"] ??

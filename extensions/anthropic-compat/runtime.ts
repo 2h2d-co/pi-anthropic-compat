@@ -1,4 +1,6 @@
-import { streamSimple } from "@earendil-works/pi-ai/api/anthropic-messages";
+// Pi resolves only the pi-ai root, `/compat`, `/oauth`, and `/providers/all` for installed
+// extensions. The `/api/*` subpaths are unavailable outside a development checkout.
+import { anthropicMessagesApi } from "@earendil-works/pi-ai/compat";
 import {
   getCurrentSystemMessage,
   normalizeContext,
@@ -42,20 +44,24 @@ import {
   type RetainedHistory,
 } from "./tail.ts";
 
+const anthropic = anthropicMessagesApi();
+
 async function prepareRequest(
   model: Model<"anthropic-messages">,
   context: TranscriptContext,
   options: SimpleStreamOptions,
 ): Promise<Request> {
   let prepared: Request | undefined;
-  await streamSimple(model, context, {
-    ...options,
-    maxRetries: 0,
-    fetch: (input, init) => {
-      prepared = new Request(input, init);
-      return Promise.reject(new Error("Native request prepared without transmission."));
-    },
-  }).result();
+  await anthropic
+    .streamSimple(model, context, {
+      ...options,
+      maxRetries: 0,
+      fetch: (input, init) => {
+        prepared = new Request(input, init);
+        return Promise.reject(new Error("Native request prepared without transmission."));
+      },
+    })
+    .result();
   options.signal?.throwIfAborted();
   if (!prepared) throw new Error("Could not serialize the Anthropic compaction request.");
   return prepared;
@@ -153,7 +159,7 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
     api: "anthropic-messages",
     streamSimple: (model, messages, options) => {
       if (!anthropicModel(model)) throw new Error("Expected Anthropic Messages API.");
-      return streamSimple(model, messages, {
+      return anthropic.streamSimple(model, messages, {
         ...options,
         onPayload: async (payload, selected) => {
           const updated = await options?.onPayload?.(payload, selected);

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Load under an installed Pi package by importing the Anthropic Messages adapter through the `@earendil-works/pi-ai/compat` entry that Pi resolves for extensions, instead of an unresolvable `api/` subpath.
+
 ## [0.0.1] - 2026-09-20
 
 ### Added
