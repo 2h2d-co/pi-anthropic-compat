@@ -207,7 +207,7 @@ mise exec -- npm run test:live
 
 Both use your existing Pi Anthropic login and global context instructions and
 require the system-prompt patcher installed under Pi's global npm directory.
-The conversations contain synthetic facts and have no tools.
+The conversations contain synthetic facts.
 
 The SDK test requires actual signed thinking, then verifies native keep-tail
 compaction, unchanged replay, usage, and fact recovery. Two negative controls
@@ -216,8 +216,10 @@ Low effort can omit thinking on simple tasks, so the fixture includes a
 multi-step arithmetic problem. A response without thinking fails the test.
 
 The CLI test packs the extension, loads the archive through the shipped Pi
-executable in RPC mode with an isolated agent directory, and runs a turn, a
-native compaction, a continuation, a restart, and a resumed continuation.
+executable in RPC mode with an isolated agent directory, and runs a turn that
+reads the facts with Pi's built-in `read` tool, a native compaction, a
+continuation, a restart, and a resumed continuation. Tool declarations and the
+tool-call/result pair therefore pass through the summary request and replay.
 Fact recall after compaction proves the signed block replayed, because the
 extension withholds Pi's summary message once a checkpoint exists. Set
 `PI_ANTHROPIC_CLI_PATH` to test another installed Pi 0.86 `cli.js`.

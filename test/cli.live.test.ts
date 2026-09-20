@@ -15,8 +15,11 @@ import { REQUEST_TYPE } from "../extensions/anthropic-compat/tail.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FACTS =
-  "Remember these six synthetic project facts: project Lantern, language TypeScript, port 4317, " +
-  "storage SQLite, constraint no network access, next task implement /health. Reply with the single word OK.";
+  "project Lantern, language TypeScript, port 4317, storage SQLite, " +
+  "constraint no network access, next task implement /health";
+const READ_FACTS =
+  "Use the read tool to read facts.txt in the working directory. It lists six synthetic project " +
+  "facts. Remember them, then reply with the single word OK.";
 
 /**
  * Packs the extension, loads the archive through the shipped Pi CLI, and runs one turn,
@@ -118,7 +121,10 @@ test(
         "--no-skills",
         "--no-prompt-templates",
         "--no-context-files",
-        "--no-builtin-tools",
+        // Keep the built-in read tool: tool declarations and a tool-call/result pair must
+        // survive the summary request, signed replay, and resume.
+        "--tools",
+        "read",
         "--thinking",
         "low",
         "--session",
@@ -162,7 +168,18 @@ test(
       assert.doesNotMatch(client.getStderr(), /Failed to load extension|not a function/);
     }
 
-    await turn(FACTS, /OK/i);
+    await writeFile(join(temporary, "facts.txt"), `${FACTS}\n`);
+    await turn(READ_FACTS, /OK/i);
+    const before = await client.getEntries();
+    assert.ok(
+      before.entries.some(
+        (entry) =>
+          entry.type === "message" &&
+          entry.message.role === "assistant" &&
+          entry.message.content.some((block) => block.type === "toolCall" && block.name === "read"),
+      ),
+      "The model read the facts file with the built-in read tool.",
+    );
     const compacted = await client.compact();
     assert.ok(compacted.summary.length > 0);
     const { entries } = await client.getEntries();
