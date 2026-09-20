@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-09-20
+
 ### Added
 
 - Native on-demand Anthropic compaction for manual and automatic Pi compaction on Pi 0.86.0 or newer.
@@ -16,7 +18,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Strict thinking-prefix enforcement for retained history and a live Fable 5.1 low-effort test with rejection controls.
 - Live packaged-CLI test that exercises native compaction, replay, and resume through the shipped Pi executable.
 
-### Fixed
-
-- Make request-boundary fingerprints independent of the machine's locale.
-- Preserve explicit effort and adaptive-thinking controls in native summary requests without retaining incompatible structured-output settings.
+[Unreleased]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/2h2d-co/pi-anthropic-compat/releases/tag/v0.0.1
