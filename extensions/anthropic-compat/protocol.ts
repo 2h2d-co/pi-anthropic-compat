@@ -1,7 +1,9 @@
 import { calculateCost, type Model, type Api, type Usage } from "@earendil-works/pi-ai";
 import { object, objects, type JsonObject } from "./json.ts";
+import { retainedHistory, replayRetained, type RetainedHistory } from "./tail.ts";
 
 export const COMPACTION_BETA = "compact-2026-09-04";
+export const THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01";
 export const CHECKPOINT_TYPE = "pi-anthropic-compat";
 export const TEMPLATE_TYPE = "pi-anthropic-compat-template";
 export const BOUNDARY_TYPE = "pi-anthropic-compat-boundary";
@@ -31,6 +33,7 @@ export type Checkpoint = {
   version: 1;
   model: string;
   block: JsonObject;
+  retained?: RetainedHistory;
 };
 
 export function checkpoint(details: unknown): Checkpoint | undefined {
@@ -41,7 +44,13 @@ export function checkpoint(details: unknown): Checkpoint | undefined {
     throw new Error("Unsupported Anthropic compaction checkpoint.");
   }
   const block = signedBlock(data["block"]);
-  return { type: CHECKPOINT_TYPE, version: 1, model: data["model"], block };
+  return {
+    type: CHECKPOINT_TYPE,
+    version: 1,
+    model: data["model"],
+    block,
+    ...(data["retained"] === undefined ? {} : { retained: retainedHistory(data["retained"]) }),
+  };
 }
 
 export function signedBlock(value: unknown): JsonObject {
@@ -58,7 +67,7 @@ export function signedBlock(value: unknown): JsonObject {
   return block;
 }
 
-export function addBeta(payload: JsonObject): JsonObject {
+export function addBeta(payload: JsonObject, beta = COMPACTION_BETA): JsonObject {
   const betas = payload["betas"];
   if (
     betas !== undefined &&
@@ -66,11 +75,25 @@ export function addBeta(payload: JsonObject): JsonObject {
   ) {
     throw new Error("Invalid Anthropic beta configuration.");
   }
-  return { ...payload, betas: [...new Set([...(betas ?? []), COMPACTION_BETA])] };
+  return { ...payload, betas: [...new Set([...(betas ?? []), beta])] };
+}
+
+export function enforceThinking(payload: JsonObject): JsonObject {
+  if (payload["thinking"] === undefined) return payload;
+  const thinking = object(payload["thinking"]);
+  if (thinking["type"] !== "adaptive" && thinking["type"] !== "enabled") return payload;
+  return addBeta(
+    {
+      ...payload,
+      thinking: { ...thinking, block_binding: { prefix_mismatch_behavior: "error" } },
+    },
+    THINKING_BINDING_BETA,
+  );
 }
 
 export function replay(payload: JsonObject, saved: Checkpoint | undefined): JsonObject {
   if (!saved) return payload;
+  if (saved.retained) payload = enforceThinking(replayRetained(payload, saved.retained));
   const messages = objects(payload["messages"]);
   for (const message of messages) {
     if (
@@ -109,6 +132,16 @@ export function summaryPayload(
   delete result["output_config"];
   delete result["thinking"];
   delete result["fallbacks"];
+  // Keep the selected effort instead of silently upgrading a low-effort summary
+  // to the API's high default. Remove structured output and task budgets.
+  if (payload["output_config"] !== undefined) {
+    const effort = object(payload["output_config"])["effort"];
+    if (typeof effort === "string") result["output_config"] = { effort };
+  }
+  if (payload["thinking"] !== undefined) {
+    const thinking = object(payload["thinking"]);
+    if (thinking["type"] === "adaptive") result["thinking"] = thinking;
+  }
   const custom = instructions?.trim();
   if (custom && custom.length > 16_000)
     throw new Error("Compaction instructions exceed 16,000 characters.");
@@ -184,7 +217,7 @@ export function parseSummary(response: JsonObject, model: Model<Api>) {
 
 export function template(payload: JsonObject): JsonObject {
   const result: JsonObject = { model: payload["model"] ?? null };
-  for (const key of ["system", "tools"] as const) {
+  for (const key of ["system", "tools", "thinking", "output_config"] as const) {
     if (payload[key] !== undefined) result[key] = payload[key];
   }
   return result;

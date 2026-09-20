@@ -77,6 +77,10 @@ test(
     assert.equal(typeof component.handleInput, "function");
     component.handleInput?.(" ");
     assert.equal(current.enabled, true);
+    component.handleInput?.("\u001b[B");
+    component.handleInput?.(" ");
+    assert.equal(current.keepRecentTokens, 4096);
+    component.handleInput?.("\u001b[A");
     for (const width of [40, 80, 120]) {
       assert.ok(component.render(width).every((line) => visibleWidth(line) <= width));
     }
@@ -86,6 +90,7 @@ test(
       JSON.parse(await readFile(join(root, "agent", "pi-anthropic-compat.json"), "utf8")),
     );
     assert.equal(saved["enabled"], true);
+    assert.equal(saved["keepRecentTokens"], 4096);
     component.handleInput?.(" ");
     assert.equal(current.enabled, false);
     component.handleInput?.("\u001b");

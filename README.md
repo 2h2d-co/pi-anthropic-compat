@@ -33,7 +33,7 @@ The extension:
 - uses Pi's Anthropic serializer and authentication;
 - checks the selected model's live compaction capability before summarizing;
 - preserves the complete signed block, including opaque fields;
-- replaces the full active conversation with the summary;
+- summarizes the full active conversation or an older range with recent messages retained;
 - sends the signed block first on later Anthropic requests;
 - preserves original messages in Pi's append-only session tree;
 - persists the checkpoint for resume, reload, and branch navigation;
@@ -45,9 +45,45 @@ This captures the final system instructions and tool definitions after other
 extensions have transformed them. The capture persists in the session, so a
 resumed session does not need another turn.
 
-Full-history compaction deliberately **does not keep recent turns verbatim**.
-Pi's `keepRecentTokens` setting does not control the native summary boundary.
-There are no retained thinking blocks from the summarized range.
+Full-history compaction is the default. Set **Native tail tokens** in
+`/anthropic-settings` to retain recent messages verbatim, including their signed
+thinking. This extension's `keepRecentTokens` setting controls retention.
+Pi's separate setting with the same name does not control the native boundary.
+
+### Retaining recent messages
+
+Set `keepRecentTokens` to a positive integer, such as `16000`.
+The extension selects an actual earlier Anthropic request as the older range.
+It sends only that range for summarization, then replays the signed summary
+followed by the unchanged recent messages.
+
+The target uses Pi's approximate message token counts. Opaque thinking is not
+accurately measurable with that estimate. Retention rounds up to a safe request
+boundary and can exceed the target. A retained range can start with an assistant
+response rather than a complete user/assistant exchange.
+
+If no recorded boundary satisfies the target, compaction cancels without a
+summary request. Run more Anthropic turns or reduce Native tail tokens.
+Existing sessions need an ordinary turn with this extension version to record
+a boundary. The extension never silently substitutes full-history compaction.
+
+Retained history requires unchanged model, system instructions, tools, and
+earlier messages. Incompatible changes stop replay before transmission.
+Cache-marker movement and equivalent JSON formatting are allowed.
+Pending tool calls must finish before compaction. Arbitrary messages cannot be
+removed from the middle of retained history.
+
+When thinking is enabled, keep-tail mode explicitly requests
+`prefix_mismatch_behavior: "error"` instead of silently dropping invalid
+thinking. Turning retention off does not discard a previously retained range.
+To change system instructions or tools, first compact the whole conversation
+with `keepRecentTokens: 0`, then make the change.
+
+Pi 0.85.1 synthesizes effort-control messages around Fable responses. The
+extension removes only a verified duplicate boundary instruction that was
+already summarized. It preserves every instruction inside the retained range.
+
+### Pi lifecycle
 
 Pi still owns automatic-compaction timing, cancellation, and retry behavior.
 Pi also decides whether a session is large enough to compact before invoking
@@ -75,8 +111,8 @@ When switching to an unsupported model or provider, Pi's readable summary
 remains available as ordinary context. Returning to a supported Anthropic
 model restores native replay if that checkpoint is still on the active branch.
 
-Bedrock, Google Cloud, threshold compaction, context editing, background
-compaction, and verbatim recent-turn retention are not implemented.
+Bedrock, Google Cloud, threshold compaction, context editing, and background
+compaction are not implemented.
 
 ### Failure and cost
 
@@ -93,9 +129,11 @@ Compaction is billed separately. Accounting uses `usage.iterations`, not the
 top-level usage fields, which can be zero on a successful summary request.
 Failed summary requests can still incur charges.
 
-The extension stores final system/tool templates and signed summaries in Pi's
-existing session file. It never stores authentication headers or logs raw
-provider error bodies. Treat session files as private conversation data.
+The extension stores final request templates, compact request-boundary hashes,
+signed summaries, and retained native messages in Pi's existing session file.
+It does not store a complete transcript copy for every request.
+It never stores authentication headers or logs raw provider error bodies.
+Treat session files as private conversation data.
 
 ## Settings
 
@@ -113,6 +151,7 @@ Settings are stored in `~/.pi/agent/pi-anthropic-compat.json`.
 ```json
 {
   "enabled": false,
+  "keepRecentTokens": 0,
   "maxSummaryTokens": 4096,
   "timeoutSeconds": 120
 }
@@ -121,6 +160,7 @@ Settings are stored in `~/.pi/agent/pi-anthropic-compat.json`.
 | Setting            | Accepted values            |
 | ------------------ | -------------------------- |
 | `enabled`          | `true` or `false`          |
+| `keepRecentTokens` | Integer from 0 to 200000   |
 | `maxSummaryTokens` | Integer from 1024 to 32768 |
 | `timeoutSeconds`   | Integer from 10 to 600     |
 
@@ -153,9 +193,11 @@ Avoid another extension replacing the `anthropic` provider's stream function.
 Tests use synthetic responses and real Pi session machinery without network
 inference. They cover protocol validation, token accounting, configuration,
 the settings menu, automatic/manual compaction, repeated summaries, durable
-replay, branch navigation, cancellation, and concurrent session changes.
+replay, forks, branch navigation, cancellation, and concurrent session changes.
+Retained-history tests cover safe-boundary selection, token targets, thinking,
+effort instructions, changed system/tools/content, and cold session resume.
 
-An optional live test makes billed Sonnet 5 requests:
+An optional live test makes billed Fable 5.1 requests at `low` effort:
 
 ```sh
 mise exec -- npm run test:live
@@ -164,7 +206,11 @@ mise exec -- npm run test:live
 It uses your existing Pi Anthropic login and global context instructions.
 It requires the system-prompt patcher installed under Pi's global npm directory.
 The conversation contains synthetic facts and has no tools.
-It verifies native compaction, signed replay, usage, and fact recovery.
+It requires actual signed thinking, then verifies native keep-tail compaction,
+unchanged replay, usage, and fact recovery. Two negative controls must return
+thinking-prefix errors after deliberate system and history changes.
+Low effort can omit thinking on simple tasks, so the fixture includes a
+multi-step arithmetic problem. A response without thinking fails the test.
 The default test suite and CI skip this test.
 
 ## Release
@@ -192,3 +238,4 @@ Stable versions use `latest`. Prereleases use their prerelease identifier.
 
 - [Anthropic native compaction](https://platform.claude.com/docs/en/build-with-claude/compaction)
 - [Anthropic model capabilities](https://platform.claude.com/docs/en/api/beta/models/list)
+- [Anthropic preserved-thinking contract](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking#keep-tail-compaction)

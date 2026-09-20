@@ -12,3 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Persistent signed-summary replay, full session-history retention, and compaction usage accounting.
 - Searchable `/anthropic-settings` menu with session changes, explicit saves, and discard controls.
 - Trusted project configuration, cancellation, and concurrent session/configuration change protection.
+- Configurable native tail retention with verified request boundaries, exact thinking replay, and resume/fork support.
+- Strict thinking-prefix enforcement for retained history and a live Fable 5.1 low-effort test with rejection controls.
+
+### Fixed
+
+- Preserve explicit effort and adaptive-thinking controls in native summary requests without retaining incompatible structured-output settings.

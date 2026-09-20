@@ -6,7 +6,10 @@
 - Native compaction must fail closed. Do not silently substitute a plain-text summary after native failure.
 - Preserve exact native blocks and signatures. Never print credentials, signed block contents, or raw provider error bodies.
 - Keep final provider-payload transforms effective, including the Anthropic system-prompt patcher.
-- Full-history compaction is the initial boundary. Do not add kept-turn or background compaction without validating Anthropic's thinking-preservation contract.
+- Keep-tail compaction must use verified earlier native requests and preserve the retained messages exactly. Never infer native boundaries from displayed turn counts or silently fall back to full-history compaction.
+- Keep request-boundary records compact. Persist hashes rather than a complete transcript copy for every request.
+- Validate retained thinking with Fable 5.1 at low effort, real signed thinking blocks, explicit error enforcement, and rejection controls. Never increase live-test effort without authorization.
+- Background compaction remains out of scope.
 - Preserve unrelated concurrent filesystem changes. Ask only when they directly conflict with scoped work.
 - Run complete non-writing validation through `mise run check`.
 - Run `npm run check` and `npm test` before committing meaningful code changes.

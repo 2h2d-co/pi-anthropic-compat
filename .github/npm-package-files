@@ -7,5 +7,6 @@ extensions/anthropic-compat/json.ts
 extensions/anthropic-compat/protocol.ts
 extensions/anthropic-compat/runtime.ts
 extensions/anthropic-compat/settings.ts
+extensions/anthropic-compat/tail.ts
 extensions/index.ts
 package.json

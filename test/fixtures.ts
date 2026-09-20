@@ -21,9 +21,9 @@ export const block: JsonObject = {
   encrypted_content: "test-opaque-content",
 };
 
-export function summaryResponse(): JsonObject {
+export function summaryResponse(modelId = model.id): JsonObject {
   return {
-    model: model.id,
+    model: modelId,
     stop_reason: "compaction",
     content: [block],
     usage: {
@@ -42,22 +42,36 @@ export function summaryResponse(): JsonObject {
   };
 }
 
-export function textResponse(inputTokens = 100): Response {
+export function textResponse(inputTokens = 100, modelId = model.id, thinking = false): Response {
   const events: JsonObject[] = [
     {
       type: "message_start",
       message: {
         id: "test-response",
-        model: model.id,
+        model: modelId,
         usage: { input_tokens: inputTokens, output_tokens: 0 },
       },
     },
+    ...(thinking
+      ? [
+          {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+              type: "thinking",
+              thinking: "",
+              signature: "fixture-thinking-signature",
+            },
+          },
+          { type: "content_block_stop", index: 0 },
+        ]
+      : []),
     {
       type: "content_block_start",
-      index: 0,
+      index: thinking ? 1 : 0,
       content_block: { type: "text", text: "Recorded the synthetic project." },
     },
-    { type: "content_block_stop", index: 0 },
+    { type: "content_block_stop", index: thinking ? 1 : 0 },
     {
       type: "message_delta",
       delta: { stop_reason: "end_turn" },

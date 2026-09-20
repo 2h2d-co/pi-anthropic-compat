@@ -26,6 +26,14 @@ export function settingItems(config: Config): SettingItem[] {
       values: ["off", "on"],
     },
     {
+      id: "keepRecentTokens",
+      label: "Native tail tokens",
+      description:
+        "Keep approximately this many recent tokens unchanged. Zero summarizes all history. Safe boundaries can retain more.",
+      currentValue: String(config.keepRecentTokens),
+      values: ["0", "4096", "8192", "16000", "32000"],
+    },
+    {
       id: "maxSummaryTokens",
       label: "Summary output budget",
       description: "Maximum output tokens for the separate summary request.",
@@ -46,7 +54,7 @@ export function settingPatch(id: string, value: string, current: Config): Config
   if (id === "enabled" && (value === "on" || value === "off")) {
     return { ...current, enabled: value === "on" };
   }
-  if (id === "maxSummaryTokens" || id === "timeoutSeconds") {
+  if (id === "keepRecentTokens" || id === "maxSummaryTokens" || id === "timeoutSeconds") {
     return parseConfig({ [id]: Number(value) }, current);
   }
   throw new Error("Unknown Anthropic setting.");

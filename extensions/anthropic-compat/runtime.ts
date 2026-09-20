@@ -1,26 +1,57 @@
 import { streamSimple } from "@earendil-works/pi-ai/api/anthropic-messages";
-import type { Api, Message, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import type { Api, Context, Message, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import {
   convertToLlm,
   buildSessionContext,
+  sessionEntryToContextMessages,
   type ExtensionAPI,
   type ExtensionContext,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import { compactRequest, supportsCompaction } from "./client.ts";
 import { loadConfig, type Config } from "./config.ts";
-import { object, type JsonObject } from "./json.ts";
+import { object, objects, type JsonObject } from "./json.ts";
 import {
   BOUNDARY_TYPE,
   CHECKPOINT_TYPE,
   TEMPLATE_TYPE,
   checkpoint,
   eligibleModel,
+  enforceThinking,
   parseSummary,
   replay,
   template,
 } from "./protocol.ts";
 import { registerSettings } from "./settings.ts";
+import {
+  REQUEST_TYPE,
+  bindingTemplate,
+  fingerprint,
+  messageHash,
+  prepareRetained,
+  requestBoundary,
+  selectTail,
+  type RetainedHistory,
+} from "./tail.ts";
+
+async function prepareRequest(
+  model: Model<"anthropic-messages">,
+  context: Context,
+  options: SimpleStreamOptions,
+): Promise<Request> {
+  let prepared: Request | undefined;
+  await streamSimple(model, context, {
+    ...options,
+    maxRetries: 0,
+    fetch: (input, init) => {
+      prepared = new Request(input, init);
+      return Promise.reject(new Error("Native request prepared without transmission."));
+    },
+  }).result();
+  options.signal?.throwIfAborted();
+  if (!prepared) throw new Error("Could not serialize the Anthropic compaction request.");
+  return prepared;
+}
 
 function anthropicModel(model: Model<Api>): model is Model<"anthropic-messages"> {
   return model.api === "anthropic-messages";
@@ -117,7 +148,16 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
           if (JSON.stringify(activeTemplate(branch, model.id)) !== JSON.stringify(nextTemplate)) {
             pi.appendEntry(TEMPLATE_TYPE, nextTemplate);
           }
-          return replay(transformed, activeCheckpoint(branch));
+          const current = configuration(ctx);
+          const final = replay(
+            current.enabled && current.keepRecentTokens > 0
+              ? enforceThinking(transformed)
+              : transformed,
+            activeCheckpoint(branch),
+          );
+          const anchor = ctx.sessionManager.getLeafId();
+          if (anchor) pi.appendEntry(REQUEST_TYPE, requestBoundary(final, anchor));
+          return final;
         },
       });
     },
@@ -155,49 +195,77 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
         saved ? active.filter((message) => message.role !== "compactionSummary") : active,
       );
       requireCompletedTools(messages);
-      const tools = pi.getAllTools().filter((tool) => pi.getActiveTools().includes(tool.name));
-      let prepared: Request | undefined;
-      // Reuse Pi's exact serializer and auth construction without making a model call.
-      await streamSimple(
-        requestModel,
-        {
-          systemPrompt: ctx.getSystemPrompt(),
-          messages,
-          tools: tools.map((tool) => ({
+      const serializationContext = () => ({
+        systemPrompt: ctx.getSystemPrompt(),
+        tools: pi
+          .getAllTools()
+          .filter((tool) => pi.getActiveTools().includes(tool.name))
+          .map((tool) => ({
             name: tool.name,
             description: tool.description,
             parameters: tool.parameters,
           })),
-        },
-        {
-          ...auth,
-          signal,
-          maxRetries: 0,
-          maxTokens: Math.min(configuration(ctx).maxSummaryTokens, model.maxTokens),
-          onPayload: async (payload, selected) => {
-            const updated = await currentTransform?.(payload, selected);
-            const result = object(updated === undefined ? payload : updated);
-            if (!currentTransform) {
-              for (const key of ["system", "tools"] as const) {
-                if (savedTemplate[key] === undefined) delete result[key];
-                else result[key] = savedTemplate[key];
-              }
+      });
+      const level = pi.getThinkingLevel();
+      const serializationOptions: SimpleStreamOptions = {
+        ...auth,
+        signal,
+        ...(level === "off" ? {} : { reasoning: level }),
+        maxTokens: Math.min(configuration(ctx).maxSummaryTokens, model.maxTokens),
+        onPayload: async (payload, selected) => {
+          const updated = await currentTransform?.(payload, selected);
+          const result = object(updated === undefined ? payload : updated);
+          if (!currentTransform) {
+            for (const key of ["system", "tools", "thinking", "output_config"] as const) {
+              if (savedTemplate[key] === undefined) delete result[key];
+              else result[key] = savedTemplate[key];
             }
-            return replay(result, saved);
-          },
-          fetch: (input, init) => {
-            prepared = new Request(input, init);
-            return Promise.reject(
-              new Error("Native compaction request prepared without transmission."),
-            );
-          },
+          }
+          return configuration(ctx).keepRecentTokens > 0 ? enforceThinking(result) : result;
         },
-      ).result();
-      signal.throwIfAborted();
-      if (!prepared) throw new Error("Could not serialize the Anthropic compaction request.");
-      if (object(await prepared.clone().json())["model"] !== model.id) {
+      };
+      // Serialize without transmission, then select only a proven earlier request.
+      const whole = await prepareRequest(
+        requestModel,
+        { ...serializationContext(), messages },
+        serializationOptions,
+      );
+      const wholePayload = replay(object(await whole.clone().json()), saved);
+      if (wholePayload["model"] !== model.id) {
         throw new Error("A provider transform changed the summary model. History was preserved.");
       }
+      const keepRecentTokens = configuration(ctx).keepRecentTokens;
+      const managedEffort = model.compat?.supportsMidConvoEffort === true;
+      const selection =
+        keepRecentTokens > 0
+          ? selectTail(branch, leaf, wholePayload, keepRecentTokens, managedEffort)
+          : undefined;
+      let retained: RetainedHistory | undefined;
+      if (selection) {
+        const keptMessages = convertToLlm(
+          selection.keptEntries.flatMap(sessionEntryToContextMessages),
+        );
+        requireCompletedTools(keptMessages);
+        const tailRequest = await prepareRequest(
+          requestModel,
+          { ...serializationContext(), messages: keptMessages },
+          serializationOptions,
+        );
+        retained = prepareRetained(
+          selection.tail,
+          object(await tailRequest.json()),
+          selection.template,
+          selection.prefix.at(-1),
+          managedEffort,
+        );
+      }
+      const prepared = new Request(whole.url, {
+        method: "POST",
+        headers: whole.headers,
+        body: JSON.stringify(
+          selection ? { ...wholePayload, messages: selection.prefix } : wholePayload,
+        ),
+      });
       if (!(await supportsCompaction(prepared, model.id, signal, fetcher))) {
         ctx.ui.notify(
           "This model does not support native compaction. Pi compaction remains available.",
@@ -214,6 +282,24 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
       );
       const result = parseSummary(raw, model);
       signal.throwIfAborted();
+      if (selection) {
+        const verification = await prepareRequest(
+          requestModel,
+          { ...serializationContext(), messages },
+          serializationOptions,
+        );
+        const verifiedPayload = replay(object(await verification.json()), saved);
+        if (
+          fingerprint(bindingTemplate(verifiedPayload)) !==
+            fingerprint(bindingTemplate(wholePayload)) ||
+          messageHash(objects(verifiedPayload["messages"])) !==
+            messageHash(objects(wholePayload["messages"]))
+        ) {
+          throw new Error(
+            "System, tools, or history changed during compaction. The summary was not applied.",
+          );
+        }
+      }
       if (
         ctx.sessionManager.getSessionId() !== session ||
         ctx.sessionManager.getLeafId() !== leaf ||
@@ -221,10 +307,10 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
       ) {
         throw new Error("The session changed during compaction. The summary was not applied.");
       }
-      // This non-message entry is a valid empty retained-tail boundary. Full history
-      // stays in Pi's append-only tree, but no summarized turn is sent twice.
-      pi.appendEntry(BOUNDARY_TYPE, { version: 1 });
-      const boundary = ctx.sessionManager.getLeafId();
+      // Full-history mode needs an empty boundary. Keep-tail mode points to the
+      // original first retained entry. Neither mode deletes historical entries.
+      if (!selection) pi.appendEntry(BOUNDARY_TYPE, { version: 1 });
+      const boundary = selection?.firstKeptEntryId ?? ctx.sessionManager.getLeafId();
       if (!boundary) throw new Error("Could not record the compaction boundary.");
       return {
         compaction: {
@@ -237,6 +323,7 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
             version: 1,
             model: model.id,
             block: result.block,
+            ...(retained ? { retained } : {}),
           },
         },
       };

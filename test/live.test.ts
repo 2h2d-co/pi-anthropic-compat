@@ -13,11 +13,12 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import extension from "../extensions/index.ts";
-import { object } from "../extensions/anthropic-compat/json.ts";
+import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
 import { activeCheckpoint } from "../extensions/anthropic-compat/runtime.ts";
+import { messageHash } from "../extensions/anthropic-compat/tail.ts";
 
 test(
-  "live Sonnet 5 compaction and replay through Pi with the installed system-prompt patcher",
+  "live Fable 5.1 low-effort retained thinking with enforced positive and negative controls",
   {
     skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
     timeout: 180000,
@@ -29,7 +30,7 @@ test(
     await mkdir(join(root, ".pi"));
     await writeFile(
       join(root, ".pi", "pi-anthropic-compat.json"),
-      JSON.stringify({ enabled: true }),
+      JSON.stringify({ enabled: true, keepRecentTokens: 1 }),
     );
     const realAgentDir = getAgentDir();
     const patcher = join(
@@ -50,8 +51,31 @@ test(
       modelsStorePath: join(agentDir, "models-store.json"),
       allowModelNetwork: false,
     });
-    const model = runtime.getModel("anthropic", "claude-sonnet-5");
-    assert.ok(model, "Sonnet 5 must exist in the installed Pi model catalog.");
+    const model = runtime.getModel("anthropic", "claude-fable-5-1");
+    assert.ok(model, "Fable 5.1 must exist in the installed Pi model catalog.");
+    const send = globalThis.fetch;
+    let continuation: Request | undefined;
+    const requests: JsonObject[] = [];
+    t.mock.method(
+      globalThis,
+      "fetch",
+      async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        const request = new Request(input, init);
+        if (request.method === "POST") {
+          const body = object(await request.clone().json());
+          // Inspect only safe metadata in assertion failures, never native content.
+          assert.equal(body["model"], "claude-fable-5-1");
+          assert.equal(object(body["output_config"])["effort"], "low");
+          assert.equal(
+            object(object(body["thinking"])["block_binding"])["prefix_mismatch_behavior"],
+            "error",
+          );
+          requests.push(body);
+          if (!body["compaction"]) continuation = request.clone();
+        }
+        return send(request);
+      },
+    );
     const settings = SettingsManager.inMemory({
       compaction: { enabled: false, keepRecentTokens: 1 },
       retry: { enabled: false },
@@ -70,7 +94,8 @@ test(
         (pi) =>
           pi.on("before_provider_request", (event) => ({
             ...object(event.payload),
-            max_tokens: 512,
+            max_tokens: 2048,
+            output_config: { effort: "low" },
           })),
       ],
     });
@@ -82,7 +107,7 @@ test(
       agentDir,
       modelRuntime: runtime,
       model,
-      thinkingLevel: "off",
+      thinkingLevel: "low",
       sessionManager: manager,
       settingsManager: settings,
       resourceLoader: loader,
@@ -91,7 +116,7 @@ test(
     t.after(() => session.dispose());
     await session.bindExtensions({});
     await session.prompt(
-      "Synthetic project: Lantern. Language: TypeScript. Port: 4317. Storage: SQLite. Constraint: no network access. Next task: implement /health. Reply only OK.",
+      "Remember these six synthetic project facts: project Lantern, language TypeScript, port 4317, storage SQLite, constraint no network access, next task implement /health. Then solve this verification problem carefully: find the smallest positive integer n such that n mod 17 = 12, n mod 19 = 8, n mod 23 = 14, and n mod 29 = 7. Check all four congruences before answering. Reply with n and the four checked remainders. Do not use tools.",
     );
     const first = session.messages.at(-1);
     if (first?.role === "assistant" && first.stopReason !== "stop") {
@@ -122,8 +147,25 @@ test(
       first?.role === "assistant" && first.stopReason === "stop",
       "The initial synthetic turn must succeed before compaction.",
     );
+    assert.equal(first.model, model.id, "The provider must not fall back to another model.");
+    assert.ok(
+      first.content.some((item) => item.type === "thinking" && Boolean(item.thinkingSignature)),
+      "Actual signed thinking is required. A successful response without thinking proves nothing.",
+    );
     const summary = await session.compact("Preserve all six exact synthetic project facts.");
-    assert.ok(activeCheckpoint(manager.getBranch()));
+    const saved = activeCheckpoint(manager.getBranch());
+    assert.ok(saved?.retained);
+    assert.ok(
+      saved.retained.messages.some((message) =>
+        objects(message["content"]).some(
+          (item) =>
+            item["type"] === "thinking" &&
+            typeof item["signature"] === "string" &&
+            item["signature"].length > 0,
+        ),
+      ),
+      "The retained native tail must contain the original thinking.",
+    );
     assert.ok(summary.usage && summary.usage.totalTokens > 0);
     await session.prompt(
       "Return only JSON with project, language, port (number), storage, constraint, nextTask from the earlier project facts.",
@@ -150,8 +192,51 @@ test(
       typeof result["constraint"] === "string" && /no network access/i.test(result["constraint"]),
     );
     assert.ok(typeof result["nextTask"] === "string" && result["nextTask"].includes("/health"));
+    const replay = requests.at(-1);
+    assert.ok(replay);
+    const replayMessages = objects(replay["messages"]);
+    assert.ok(
+      messageHash(replayMessages.slice(1, 1 + saved.retained.messages.length)) ===
+        messageHash(saved.retained.messages),
+      "Kept messages must replay unchanged.",
+    );
+    assert.ok(continuation);
+    const valid = object(await continuation.clone().json());
+    for (const invalid of [
+      {
+        ...valid,
+        system: [...objects(valid["system"]), { type: "text", text: "Synthetic changed system." }],
+      },
+      {
+        ...valid,
+        messages: [
+          replayMessages[0],
+          { role: "user", content: "Synthetic injected history." },
+          ...replayMessages.slice(1),
+        ],
+      },
+    ]) {
+      const headers = new Headers(continuation.headers);
+      headers.delete("content-length");
+      const rejected = await send(continuation.url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ...invalid, stream: false }),
+        signal: AbortSignal.timeout(30000),
+        redirect: "error",
+      });
+      assert.equal(rejected.status, 400, "Changed native history must be rejected by Anthropic.");
+      const error = object(object(await rejected.json())["error"]);
+      assert.equal(error["type"], "invalid_request_error");
+      assert.ok(
+        typeof error["message"] === "string" &&
+          /thinking/i.test(error["message"]) &&
+          /prefix|conversation/i.test(error["message"]),
+        "The negative control must fail the thinking-prefix check, not an unrelated validation.",
+      );
+    }
     t.diagnostic(
-      "Native compaction, signed replay, and all six synthetic facts passed. No prompts, credentials, or signatures logged.",
+      "Fable 5.1 low effort passed native keep-tail compaction, signed-thinking replay, six-fact recovery, and two enforced rejection controls. No prompts, credentials, or signatures logged.",
     );
   },
 );
