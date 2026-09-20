@@ -1,5 +1,13 @@
 import { streamSimple } from "@earendil-works/pi-ai/api/anthropic-messages";
-import type { Api, Context, Message, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import {
+  getCurrentSystemMessage,
+  normalizeContext,
+  type Api,
+  type Message,
+  type Model,
+  type SimpleStreamOptions,
+  type TranscriptContext,
+} from "@earendil-works/pi-ai";
 import {
   convertToLlm,
   buildSessionContext,
@@ -36,7 +44,7 @@ import {
 
 async function prepareRequest(
   model: Model<"anthropic-messages">,
-  context: Context,
+  context: TranscriptContext,
   options: SimpleStreamOptions,
 ): Promise<Request> {
   let prepared: Request | undefined;
@@ -69,6 +77,19 @@ export function requireCompletedTools(messages: readonly Message[]): void {
     }
   }
   if (pending.size > 0) throw new Error("Resolve pending tool calls before native compaction.");
+}
+
+/**
+ * The transcript Pi rebuilds after compaction: its snapshot of the current prompt and
+ * tools leads, followed by the retained messages. Serializing this shape, rather than
+ * the retained messages alone, proves the tail survives the compaction entry unchanged.
+ */
+export function compactedTranscript(
+  whole: readonly Message[],
+  kept: readonly Message[],
+): TranscriptContext {
+  const snapshot = getCurrentSystemMessage(whole);
+  return normalizeContext({ messages: snapshot ? [snapshot, ...kept] : [...kept] });
 }
 
 export function activeCheckpoint(entries: readonly SessionEntry[]) {
@@ -190,22 +211,12 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
         AbortSignal.timeout(configuration(ctx).timeoutSeconds * 1000),
       ]);
       signal.throwIfAborted();
+      // Prompt and tool declarations travel as system messages inside the transcript.
       const active = buildSessionContext(branch, leaf).messages;
       const messages = convertToLlm(
         saved ? active.filter((message) => message.role !== "compactionSummary") : active,
       );
       requireCompletedTools(messages);
-      const serializationContext = () => ({
-        systemPrompt: ctx.getSystemPrompt(),
-        tools: pi
-          .getAllTools()
-          .filter((tool) => pi.getActiveTools().includes(tool.name))
-          .map((tool) => ({
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.parameters,
-          })),
-      });
       const level = pi.getThinkingLevel();
       const serializationOptions: SimpleStreamOptions = {
         ...auth,
@@ -227,7 +238,7 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
       // Serialize without transmission, then select only a proven earlier request.
       const whole = await prepareRequest(
         requestModel,
-        { ...serializationContext(), messages },
+        normalizeContext({ messages }),
         serializationOptions,
       );
       const wholePayload = replay(object(await whole.clone().json()), saved);
@@ -248,7 +259,7 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
         requireCompletedTools(keptMessages);
         const tailRequest = await prepareRequest(
           requestModel,
-          { ...serializationContext(), messages: keptMessages },
+          compactedTranscript(messages, keptMessages),
           serializationOptions,
         );
         retained = prepareRetained(
@@ -285,7 +296,7 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
       if (selection) {
         const verification = await prepareRequest(
           requestModel,
-          { ...serializationContext(), messages },
+          normalizeContext({ messages }),
           serializationOptions,
         );
         const verifiedPayload = replay(object(await verification.json()), saved);

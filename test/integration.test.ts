@@ -28,6 +28,8 @@ async function setup(
     persistent?: boolean;
     keepRecentTokens?: number;
     managed?: boolean;
+    /** Replace the serialized system prompt at the payload boundary. Default: true. */
+    patchSystem?: boolean;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "anthropic-integration-"));
@@ -51,6 +53,7 @@ async function setup(
   let contextWindow = model.contextWindow;
   let onSummary: (() => void) | undefined;
   let system = "Patched synthetic system.";
+  let section: string | undefined;
   const selected = options.managed ? { ...model, id: "claude-fable-5-1" } : model;
   const fetcher: typeof fetch = async (input, init) => {
     const request = new Request(input, init);
@@ -110,10 +113,16 @@ async function setup(
         (pi) => registerCompatibility(pi, fetcher),
         // A later-loaded system-prompt transformer must remain effective.
         (pi) =>
-          pi.on("before_provider_request", (event) => ({
-            ...object(event.payload),
-            system: [{ type: "text", text: system }],
-          })),
+          pi.on("before_provider_request", (event) =>
+            options.patchSystem === false
+              ? undefined
+              : { ...object(event.payload), system: [{ type: "text", text: system }] },
+          ),
+        // Structured prompt changes persist as later transcript system messages.
+        (pi) =>
+          pi.on("before_agent_start", (event) => {
+            if (section !== undefined) event.systemPromptOptions.sections["fixture"] = section;
+          }),
       ],
     });
     await loader.reload();
@@ -143,6 +152,9 @@ async function setup(
     setSystem: (value: string) => {
       system = value;
     },
+    setSection: (value: string) => {
+      section = value;
+    },
     interrupt: (callback: () => void) => {
       onSummary = callback;
     },
@@ -157,8 +169,11 @@ test("real Pi session compacts, replays exactly one native block, and retains or
   const result = await session.compact("Preserve the project name.");
   assert.equal(result.summary, block["content"]);
   assert.equal(result.usage?.input, 194);
-  assert.equal(session.messages.length, 1);
-  assert.equal(session.messages[0]?.role, "compactionSummary");
+  // Pi 0.86 leads the compacted context with its prompt and tool snapshot.
+  assert.deepEqual(
+    session.messages.map((message) => message.role),
+    ["system", "compactionSummary"],
+  );
   assert.equal(
     manager.getEntries().filter((entry) => entry.type === "message").length,
     oldMessages,
@@ -272,8 +287,11 @@ test("keep-tail compaction preserves thinking, survives cold resume, and compact
   assert.ok(saved?.retained);
   assert.equal(saved.retained.messages[0]?.["role"], "assistant");
   assert.ok(saved.retained.leading);
-  assert.equal(session.messages.length, 2);
-  assert.deepEqual(session.messages[1], original.at(-1));
+  assert.deepEqual(
+    session.messages.map((message) => message.role),
+    ["system", "compactionSummary", "assistant"],
+  );
+  assert.deepEqual(session.messages[2], original.at(-1));
   const summary = requests.at(-1);
   assert.ok(summary);
   // The last response is kept, not summarized.
@@ -340,7 +358,10 @@ test("automatic compaction can retain the last native response", async (t) => {
   });
   await session.prompt("Automatic retained thinking.");
   assert.ok(activeCheckpoint(manager.getBranch())?.retained);
-  assert.equal(session.messages.length, 2);
+  assert.deepEqual(
+    session.messages.map((message) => message.role),
+    ["system", "compactionSummary", "assistant"],
+  );
 });
 
 test("retention rounds up to an earlier safe request when the latest response is too small", async (t) => {
@@ -349,12 +370,64 @@ test("retention rounds up to an earlier safe request when the latest response is
   await session.prompt("Recent exact instruction with enough text to retain across compaction.");
   const original = [...session.messages];
   await session.compact();
-  assert.deepEqual(session.messages.slice(1), original.slice(1));
+  assert.equal(session.messages[0]?.role, "system");
+  assert.equal(session.messages[1]?.role, "compactionSummary");
+  assert.deepEqual(session.messages.slice(2), original.slice(2));
   assert.equal(activeCheckpoint(manager.getBranch())?.retained?.messages.length, 3);
   const request = requests.at(-1);
   assert.ok(request);
   assert.equal(objects(request["messages"]).length, 1);
   assert.equal(JSON.stringify(request["messages"]).includes("Recent exact instruction"), false);
+});
+
+test("prompt updates folded into the compaction snapshot cancel keep-tail before billing", async (t) => {
+  // Fable-class models receive later prompt sections in place, so the request prompt stays
+  // the initial one. Pi's compaction snapshot replays the section into the leading prompt,
+  // which the retained thinking was never bound to.
+  const { session, manager, requests, setSection } = await setup(t, {
+    keepRecentTokens: 1,
+    managed: true,
+    patchSystem: false,
+  });
+  await session.prompt("Before the prompt update.");
+  setSection("Added mid-conversation.");
+  await session.prompt("After the prompt update.");
+  const request = requests.at(-1);
+  assert.ok(request);
+  assert.equal(JSON.stringify(request["system"]).includes("Added mid-conversation"), false);
+  assert.match(JSON.stringify(request["messages"]), /Added mid-conversation/);
+  const leaf = manager.getLeafId();
+  await assert.rejects(session.compact(), /cancelled/i);
+  assert.equal(manager.getLeafId(), leaf);
+  assert.equal(activeCheckpoint(manager.getBranch()), undefined);
+  assert.equal(
+    requests.some((entry) => entry["compaction"] !== undefined),
+    false,
+  );
+});
+
+test("prompt updates collapsed into the leading prompt keep later turns retainable", async (t) => {
+  const { session, manager, requests, setSection } = await setup(t, {
+    keepRecentTokens: 1,
+    patchSystem: false,
+  });
+  await session.prompt("Before the prompt update.");
+  setSection("Collapsed mid-conversation.");
+  await session.prompt("Bound to the updated prompt.");
+  await session.prompt("Retained after the update.");
+  await session.compact();
+  const saved = activeCheckpoint(manager.getBranch());
+  assert.equal(saved?.retained?.messages.length, 1);
+  const summary = requests.findLast((entry) => entry["compaction"] !== undefined);
+  assert.ok(summary);
+  assert.match(JSON.stringify(summary["system"]), /Collapsed mid-conversation/);
+  // The summarized prefix ends with the last user turn; only its response is retained.
+  assert.equal(objects(summary["messages"]).at(-1)?.["role"], "user");
+  assert.equal(saved?.retained?.messages[0]?.["role"], "assistant");
+  await session.prompt("Continue.");
+  const replayed = objects(object(requests.at(-1))["messages"]);
+  assert.deepEqual(replayed[0], { role: "assistant", content: [block] });
+  assert.deepEqual(replayed.slice(1, 2), saved?.retained?.messages);
 });
 
 test("system changes while summarization runs invalidate the result before it is applied", async (t) => {

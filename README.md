@@ -2,10 +2,17 @@
 
 Native Anthropic compatibility for Pi, starting with signed on-demand compaction.
 
-Requires **Pi 0.85.1** (`>=0.85.1 <0.86.0`) and Node.js 22.19 or newer.
-Pi 0.86 changes the provider transcript API and is not supported by this version.
+Requires **Pi 0.86.0 or newer** and Node.js 22.19 or newer.
 
 ## Install
+
+Install from the repository:
+
+```sh
+pi install git:github.com/2h2d-co/pi-anthropic-compat
+```
+
+After an npm release is published:
 
 ```sh
 pi install npm:pi-anthropic-compat
@@ -71,9 +78,18 @@ thinking. Turning retention off does not discard a previously retained range.
 To change system instructions or tools, first compact the whole conversation
 with `keepRecentTokens: 0`, then make the change.
 
-Pi 0.85.1 synthesizes effort-control messages around Fable responses. The
-extension removes only a verified duplicate boundary instruction that was
-already summarized. It preserves every instruction inside the retained range.
+Pi records the current prompt and tool declarations on every compaction entry
+and leads the compacted context with that snapshot. Models that accept prompt
+updates in place, such as Fable 5.1 and Opus 5, keep the original leading
+prompt in earlier requests, so a prompt or tool update anywhere in the active
+conversation makes the snapshot differ from the request that bound the recent
+thinking. Keep-tail compaction then cancels before any summary request. Models
+that receive a collapsed prompt can still retain turns made after the update.
+Full-history compaction is unaffected.
+
+Pi synthesizes effort-control messages around Fable responses. The extension
+removes only a verified duplicate boundary instruction that was already
+summarized. It preserves every instruction inside the retained range.
 
 ### Pi lifecycle
 
@@ -123,7 +139,9 @@ Failed summary requests can still incur charges.
 
 The extension stores final request templates, compact request-boundary hashes,
 signed summaries, and retained native messages in Pi's existing session file.
-It does not store a complete transcript copy for every request.
+It records a template and a boundary hash on every direct Anthropic turn, even
+while native compaction is off, so that enabling it later can retain turns that
+already happened. It does not store a complete transcript copy for every request.
 It never stores authentication headers or logs raw provider error bodies.
 Treat session files as private conversation data.
 
@@ -189,21 +207,29 @@ replay, forks, branch navigation, cancellation, and concurrent session changes.
 Retained-history tests cover safe-boundary selection, token targets, thinking,
 effort instructions, changed system/tools/content, and cold session resume.
 
-An optional live test makes billed Fable 5.1 requests at `low` effort:
+Two optional live tests make billed Fable 5.1 requests at `low` effort:
 
 ```sh
 mise exec -- npm run test:live
 ```
 
-It uses your existing Pi Anthropic login and global context instructions.
-It requires the system-prompt patcher installed under Pi's global npm directory.
-The conversation contains synthetic facts and has no tools.
-It requires actual signed thinking, then verifies native keep-tail compaction,
-unchanged replay, usage, and fact recovery. Two negative controls must return
-thinking-prefix errors after deliberate system and history changes.
+Both use your existing Pi Anthropic login and global context instructions and
+require the system-prompt patcher installed under Pi's global npm directory.
+The conversations contain synthetic facts and have no tools.
+
+The SDK test requires actual signed thinking, then verifies native keep-tail
+compaction, unchanged replay, usage, and fact recovery. Two negative controls
+must return thinking-prefix errors after deliberate system and history changes.
 Low effort can omit thinking on simple tasks, so the fixture includes a
 multi-step arithmetic problem. A response without thinking fails the test.
-The default test suite and CI skip this test.
+
+The CLI test packs the extension, loads the archive through the shipped Pi
+executable in RPC mode with an isolated agent directory, and runs a turn, a
+native compaction, a continuation, a restart, and a resumed continuation.
+Fact recall after compaction proves the signed block replayed, because the
+extension withholds Pi's summary message once a checkpoint exists. Set
+`PI_ANTHROPIC_CLI_PATH` to test another installed Pi 0.86 `cli.js`.
+The default test suite and CI skip both tests.
 
 ## Release
 
