@@ -6,14 +6,6 @@ Requires **Pi 0.86.0 or newer** and Node.js 22.19 or newer.
 
 ## Install
 
-Install from the repository:
-
-```sh
-pi install git:github.com/2h2d-co/pi-anthropic-compat
-```
-
-After an npm release is published:
-
 ```sh
 pi install npm:pi-anthropic-compat
 ```
@@ -235,10 +227,10 @@ The default test suite and CI skip both tests.
 
 The shared release tooling records a package digest in a signed release commit.
 The tag workflow verifies that digest before staging an npm package.
-The GitHub release environment and branch/tag protections must be configured
-before publishing. Repository creation alone does not configure those controls.
 The npm trusted publisher permits staging only and is restricted to this
-repository's `publish.yml` workflow and `npm-publish` environment.
+repository's `publish.yml` workflow and `npm-publish` environment. Every
+release after `0.0.1` stages through that workflow with npm provenance and
+requires maintainer approval on npm.
 
 Prepare and push a release:
 
@@ -250,32 +242,6 @@ git push --atomic origin main vX.Y.Z
 The `.github/npm-package-files` allowlist defines the complete public package.
 Do not publish credentials, test fixtures, session data, or development notes.
 Stable versions use `latest`. Prereleases use their prerelease identifier.
-
-### First publication
-
-npm requires an existing package before trusted-publisher setup or staged
-publishing.
-
-Prepare the signed release commit and lightweight tag with the release command.
-Pack the clean release tree and verify its SHA-256 against the signed commit's
-`Npm-Artifact-SHA256` trailer before publishing that archive through npm.
-Then configure the stage-only trusted publisher:
-
-```sh
-mise exec -- npm trust github pi-anthropic-compat \
-  --file publish.yml \
-  --repository 2h2d-co/pi-anthropic-compat \
-  --environment npm-publish \
-  --allow-stage-publish \
-  --yes
-```
-
-Push the release commit and tag atomically. CI still rebuilds the archive,
-verifies its signed digest, and creates a GitHub artifact attestation.
-It skips staging only when npm's published SHA-512 integrity matches the exact
-verified archive. A different archive or failed registry lookup stops the job.
-The initial local publication has no npm provenance. Subsequent releases use
-trusted staging with npm provenance and require maintainer approval on npm.
 
 ## References
 
