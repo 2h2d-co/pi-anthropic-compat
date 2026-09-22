@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 import {
-  buildContextEntries,
+  buildSessionProjection,
   estimateTokens,
-  sessionEntryToContextMessages,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import { isObject, object, objects, type Json, type JsonObject } from "./json.ts";
@@ -108,6 +107,11 @@ export function historyMessages(payload: JsonObject, managedEffort: boolean): Js
   return managedEffort && isEffortMessage(messages.at(-1)) ? messages.slice(0, -1) : messages;
 }
 
+/**
+ * Select the retained tail from the session projection, so entries Pi omitted
+ * or replaced through `context_edit` count and serialize exactly as Pi sends
+ * them, and return the projected messages the tail must reproduce.
+ */
 export function selectTail(
   branch: readonly SessionEntry[],
   leaf: string | null,
@@ -115,12 +119,12 @@ export function selectTail(
   keepRecentTokens: number,
   managedEffort: boolean,
 ) {
-  const entries = buildContextEntries([...branch], leaf);
+  const entries = buildSessionProjection([...branch], leaf).entries;
   const messages = historyMessages(payload, managedEffort);
   const template = bindingTemplate(payload);
   const templateHash = fingerprint(template);
   for (let index = entries.length - 1; index >= 0; index--) {
-    const entry = entries[index];
+    const entry = entries[index]?.sourceEntry;
     if (entry?.type !== "custom" || entry.customType !== REQUEST_TYPE) continue;
     const data = object(entry.data);
     const count = data["count"];
@@ -134,26 +138,24 @@ export function selectTail(
       count >= messages.length
     )
       continue;
-    const anchorIndex = entries.findIndex((candidate) => candidate.id === data["anchor"]);
+    const anchorIndex = entries.findIndex(
+      (candidate) => candidate.sourceEntry.id === data["anchor"],
+    );
     if (anchorIndex < 0 || anchorIndex >= index) continue;
-    const keptEntries = entries
+    const kept = entries
       .slice(anchorIndex + 1)
-      .filter((candidate) => sessionEntryToContextMessages(candidate).length > 0);
-    const first = keptEntries[0];
+      .filter((candidate) => candidate.messages.length > 0);
+    const first = kept[0]?.sourceEntry;
     if (first?.type !== "message" || first.message.role !== "assistant") continue;
     if (first.message.stopReason !== "stop" && first.message.stopReason !== "toolUse") continue;
-    const tokens = keptEntries.reduce(
-      (total, candidate) =>
-        total +
-        sessionEntryToContextMessages(candidate).reduce((sum, msg) => sum + estimateTokens(msg), 0),
-      0,
-    );
+    const keptMessages = kept.flatMap((candidate) => candidate.messages);
+    const tokens = keptMessages.reduce((sum, msg) => sum + estimateTokens(msg), 0);
     if (tokens < keepRecentTokens) continue;
     const prefix = messages.slice(0, count);
     const tail = messages.slice(count);
     if (messageHash(prefix) !== data["hash"]) continue;
     if (tail[0]?.["role"] !== "assistant" || prefix.at(-1)?.["role"] === "assistant") continue;
-    return { prefix, tail, firstKeptEntryId: first.id, keptEntries, template, tokens };
+    return { prefix, tail, firstKeptEntryId: first.id, keptMessages, template, tokens };
   }
   throw new Error(
     "No recorded safe boundary satisfies native tail retention. History was preserved. Run more Anthropic turns or lower Native tail tokens.",

@@ -13,7 +13,6 @@ import {
 import {
   convertToLlm,
   buildSessionContext,
-  sessionEntryToContextMessages,
   type ExtensionAPI,
   type ExtensionContext,
   type SessionEntry,
@@ -149,7 +148,11 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
     transform = undefined;
     transformModel = undefined;
   });
-  pi.on("context", (event, ctx) => {
+  // The full-transcript event returns messages verbatim. A changed `context`
+  // result on Pi 0.87 folds every later system message into the leading one,
+  // which changes the serialized `system` template after a checkpoint and
+  // breaks retained-history replay.
+  pi.on("context_with_system", (event, ctx) => {
     context = ctx;
     if (!eligibleModel(ctx.model) || !activeCheckpoint(ctx.sessionManager.getBranch())) return;
     return { messages: event.messages.filter((message) => message.role !== "compactionSummary") };
@@ -259,9 +262,7 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
           : undefined;
       let retained: RetainedHistory | undefined;
       if (selection) {
-        const keptMessages = convertToLlm(
-          selection.keptEntries.flatMap(sessionEntryToContextMessages),
-        );
+        const keptMessages = convertToLlm(selection.keptMessages);
         requireCompletedTools(keptMessages);
         const tailRequest = await prepareRequest(
           requestModel,

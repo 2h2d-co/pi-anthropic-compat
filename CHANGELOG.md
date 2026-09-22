@@ -8,7 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Require Pi 0.87.0 or newer and validate against Pi 0.87.0.
+- Withhold Pi's summary message through the `context_with_system` event and select the retained tail from Pi's session projection, so `context_edit` omissions and replacements count and serialize exactly as Pi sends them.
 - The tag workflow now creates the immutable GitHub release from the verified archive and this changelog section.
+
+### Fixed
+
+- Keep retained-history replay working after a prompt or tool update that follows a keep-tail checkpoint on Pi 0.87. A changed `context` result now folds later system messages into the leading prompt, which changed the bound `system` template and rejected every following request.
 
 ## [0.0.2] - 2026-09-20
 

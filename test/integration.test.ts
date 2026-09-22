@@ -380,6 +380,54 @@ test("retention rounds up to an earlier safe request when the latest response is
   assert.equal(JSON.stringify(request["messages"]).includes("Recent exact instruction"), false);
 });
 
+test("retained replay survives a prompt update after the checkpoint", async (t) => {
+  // Fable-class models receive later sections in place. Pi 0.87 folds them into the
+  // leading prompt when a `context` handler changes the message list, which would
+  // change the bound `system` template and reject the retained history.
+  const { session, requests, setSection } = await setup(t, {
+    keepRecentTokens: 1,
+    managed: true,
+    patchSystem: false,
+  });
+  await session.prompt("Older facts.");
+  await session.prompt("Recent facts.");
+  await session.compact();
+  const saved = activeCheckpoint(session.sessionManager.getBranch());
+  assert.ok(saved?.retained);
+  setSection("Updated after the checkpoint.");
+  await session.prompt("Continue with the update.");
+  const last = session.messages.at(-1);
+  assert.ok(last?.role === "assistant");
+  assert.equal(last.stopReason, "stop", last.errorMessage);
+  const request = requests.at(-1);
+  assert.ok(request);
+  assert.equal(JSON.stringify(request["system"]).includes("Updated after the checkpoint"), false);
+  const replayed = objects(request["messages"]);
+  assert.deepEqual(replayed[0], { role: "assistant", content: [block] });
+  assert.ok(replayed.some((message) => message["role"] === "system"));
+  assert.match(JSON.stringify(replayed), /Updated after the checkpoint/);
+});
+
+test("context edits on retained entries are honoured", async (t) => {
+  const { session, manager, requests } = await setup(t, { keepRecentTokens: 1 });
+  await session.prompt("Older facts.");
+  await session.prompt("Recent facts.");
+  const answer = manager
+    .getBranch()
+    .findLast((entry) => entry.type === "message" && entry.message.role === "assistant");
+  assert.ok(answer);
+  manager.appendContextEdit(answer.id, { content: "Edited recent answer." });
+  session.refreshContext();
+  await session.compact();
+  const saved = activeCheckpoint(manager.getBranch());
+  assert.ok(saved?.retained);
+  assert.match(JSON.stringify(saved.retained.messages), /Edited recent answer/);
+  await session.prompt("Continue.");
+  const replayed = objects(object(requests.at(-1))["messages"]);
+  assert.deepEqual(replayed[0], { role: "assistant", content: [block] });
+  assert.match(JSON.stringify(replayed[1]), /Edited recent answer/);
+});
+
 test("prompt updates folded into the compaction snapshot cancel keep-tail before billing", async (t) => {
   // Fable-class models receive later prompt sections in place, so the request prompt stays
   // the initial one. Pi's compaction snapshot replays the section into the leading prompt,

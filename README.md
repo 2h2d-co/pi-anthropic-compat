@@ -2,7 +2,7 @@
 
 Native Anthropic compatibility for Pi, starting with signed on-demand compaction.
 
-Requires **Pi 0.86.0 or newer** and Node.js 22.19 or newer.
+Requires **Pi 0.87.0 or newer** and Node.js 22.19 or newer.
 
 ## Install
 
@@ -222,7 +222,7 @@ continuation, a restart, and a resumed continuation. Tool declarations and the
 tool-call/result pair therefore pass through the summary request and replay.
 Fact recall after compaction proves the signed block replayed, because the
 extension withholds Pi's summary message once a checkpoint exists. Set
-`PI_ANTHROPIC_CLI_PATH` to test another installed Pi 0.86 `cli.js`.
+`PI_ANTHROPIC_CLI_PATH` to test another installed Pi 0.87 `cli.js`.
 The default test suite and CI skip both tests.
 
 ## Release
