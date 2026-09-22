@@ -9,9 +9,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { RpcClient } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-client.js";
-import { object, objects } from "../extensions/anthropic-compat/json.ts";
+import { object } from "../extensions/anthropic-compat/json.ts";
 import { CHECKPOINT_TYPE } from "../extensions/anthropic-compat/protocol.ts";
 import { REQUEST_TYPE } from "../extensions/anthropic-compat/tail.ts";
+import { packageArchive } from "./package-archive.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FACTS =
@@ -22,7 +23,7 @@ const READ_FACTS =
   "facts. Remember them, then reply with the single word OK.";
 
 /**
- * Packs the extension, loads the archive through the shipped Pi CLI, and runs one turn,
+ * Uses the supplied archive or packs the extension, then loads it through the Pi CLI for one turn,
  * a native compaction, a continuation, a CLI restart, and a resumed continuation against
  * the real Anthropic API. The compaction summary message is withheld from the model once a
  * signed checkpoint exists, so fact recall after compaction proves the signed block replayed.
@@ -33,25 +34,7 @@ test(
   async (t) => {
     const temporary = await mkdtemp(join(tmpdir(), "anthropic-packaged-cli-"));
     t.after(() => rm(temporary, { recursive: true, force: true }));
-    const packed = objects(
-      JSON.parse(
-        execFileSync(
-          "npm",
-          [
-            "pack",
-            "--json",
-            "--ignore-scripts",
-            "--allow-directory=all",
-            "--pack-destination",
-            temporary,
-          ],
-          { cwd: root, encoding: "utf8" },
-        ),
-      ),
-    );
-    const filename = packed[0]?.["filename"];
-    assert.ok(packed.length === 1 && typeof filename === "string");
-    const archive = join(temporary, filename);
+    const archive = await packageArchive(root, temporary, process.env["PI_PACKAGE_ARCHIVE"]);
     const expected = (await readFile(join(root, ".github/npm-package-files"), "utf8"))
       .trim()
       .split("\n")

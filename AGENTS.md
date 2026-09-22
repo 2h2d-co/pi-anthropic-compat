@@ -9,7 +9,7 @@
 - Keep-tail compaction must use verified earlier native requests and preserve the retained messages exactly. Never infer native boundaries from displayed turn counts or silently fall back to full-history compaction.
 - Keep request-boundary records compact. Persist hashes rather than a complete transcript copy for every request.
 - Validate retained thinking with Fable 5.1 at low effort, real signed thinking blocks, explicit error enforcement, and rejection controls. Never increase live-test effort without authorization.
-- Before a release, run `npm run test:live`, which includes the packaged-CLI test, and run that CLI test once more with `PI_ANTHROPIC_CLI_PATH` pointing at the Mise-installed Pi executable's `cli.js`. SDK tests alone do not establish runtime compatibility.
+- The release script must run `mise run test:live` against its exact candidate archive before signing. This runs the SDK and packaged-CLI tests, then repeats the CLI test against Mise-installed Pi. A missing prerequisite or failed live test blocks signing and tagging. Keep the post-commit reproducibility rebuild free of duplicate live requests. SDK tests alone do not establish runtime compatibility.
 - Read prompt and tool declarations from transcript system messages, never from `getSystemPrompt()` or tool lists. Serialize retained tails behind the prompt snapshot Pi records on compaction entries.
 - Background compaction remains out of scope.
 - Preserve unrelated concurrent filesystem changes. Ask only when they directly conflict with scoped work.

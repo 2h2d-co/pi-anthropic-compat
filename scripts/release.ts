@@ -87,7 +87,7 @@ async function createRelease(releaseVersion: string, releaseTag: string): Promis
   git(["add", ...releaseMetadataFiles]);
   assertStagedReleaseFiles();
 
-  const localDigest = await buildPackageFromIndex(releaseVersion);
+  const localDigest = await buildPackageFromIndex(releaseVersion, true);
   git([
     "commit",
     "-S",
@@ -138,7 +138,7 @@ function assertStagedReleaseFiles(): void {
   }
 }
 
-async function buildPackageFromIndex(releaseVersion: string): Promise<string> {
+async function buildPackageFromIndex(releaseVersion: string, verifyLive = false): Promise<string> {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "npm-release-"));
   const source = join(temporaryRoot, "source");
   const output = join(temporaryRoot, "package");
@@ -167,6 +167,9 @@ async function buildPackageFromIndex(releaseVersion: string): Promise<string> {
     await validatePackage(source, result, releaseVersion);
 
     const archive = join(output, result.filename);
+    if (verifyLive) {
+      run("mise", ["run", "test:live"], root, false, { PI_PACKAGE_ARCHIVE: archive });
+    }
     const contents = await readFile(archive);
     return createHash("sha256").update(contents).digest("hex");
   } finally {
@@ -284,9 +287,16 @@ function gitSucceeds(args: string[]): boolean {
   return result.status === 0;
 }
 
-function run(command: string, args: string[], cwd: string, capture: boolean): string {
+function run(
+  command: string,
+  args: string[],
+  cwd: string,
+  capture: boolean,
+  env?: NodeJS.ProcessEnv,
+): string {
   const result = spawnSync(command, args, {
     cwd,
+    env: { ...process.env, ...env },
     encoding: "utf8",
     stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit",
   });

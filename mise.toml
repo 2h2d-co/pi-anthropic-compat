@@ -26,3 +26,15 @@ run = ["npm run check", "npm test", "npm run pack:dry"]
 [tasks.install]
 description = "Install locked dependencies and Git hooks"
 run = ["npm ci --ignore-scripts", "hk install --mise"]
+
+[tasks."test:live"]
+description = "Verify live Anthropic replay and the package through development and Mise-installed Pi"
+run = '''
+set -eu
+installed_pi="$(mise where pi)/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
+test -f "$installed_pi"
+PI_ANTHROPIC_CLI_PATH="$PWD/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \
+  npm run test:live
+PI_ANTHROPIC_LIVE_TEST=1 PI_ANTHROPIC_CLI_PATH="$installed_pi" \
+  node --test test/cli.live.test.ts
+'''

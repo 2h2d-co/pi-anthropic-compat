@@ -199,7 +199,7 @@ replay, forks, branch navigation, cancellation, and concurrent session changes.
 Retained-history tests cover safe-boundary selection, token targets, thinking,
 effort instructions, changed system/tools/content, and cold session resume.
 
-Two optional live tests make billed Fable 5.1 requests at `low` effort:
+Two live tests make billed Fable 5.1 requests at `low` effort:
 
 ```sh
 mise exec -- npm run test:live
@@ -225,6 +225,13 @@ extension withholds Pi's summary message once a checkpoint exists. Set
 `PI_ANTHROPIC_CLI_PATH` to test another installed Pi 0.87 `cli.js`.
 The default test suite and CI skip both tests.
 
+Run the complete release validation with `mise run test:live`. It runs both
+tests against the development Pi dependency, then repeats the CLI test against
+Mise-installed Pi. It requires an existing Mise Pi installation.
+Set `PI_PACKAGE_ARCHIVE` to test a prepared archive instead of packing the
+working directory. Both CLI runs use that archive. An invalid supplied archive
+fails rather than falling back to a newly packed package.
+
 ## Release
 
 The shared release tooling records a package digest in a signed release commit.
@@ -242,6 +249,11 @@ Prepare and push a release:
 mise exec -- npm run release -- X.Y.Z
 git push --atomic origin main vX.Y.Z
 ```
+
+Before signing, the release command runs `mise run test:live` against the exact
+archive built from the staged files. Missing live-test prerequisites or a failed
+test stop the release before the commit and tag. The post-commit reproducibility
+rebuild does not repeat the live tests.
 
 The `.github/npm-package-files` allowlist defines the complete public package.
 Do not publish credentials, test fixtures, session data, or development notes.
