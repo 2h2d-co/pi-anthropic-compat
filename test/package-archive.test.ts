@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
-import { packageArchive } from "./package-archive.ts";
+import { archiveEntries, packageArchive } from "./package-archive.ts";
 
 test("uses the supplied candidate without packing the working directory", async (t) => {
   const temporary = await mkdtemp(join(tmpdir(), "anthropic-archive-test-"));
@@ -34,6 +34,7 @@ test("an invalid supplied candidate never falls back to npm pack", async (t) => 
   await assert.rejects(packageArchive(temporary, temporary, join(temporary, "missing.tgz")), {
     code: "ENOENT",
   });
+  await assert.rejects(packageArchive(temporary, temporary, temporary), /is not a file/);
   assert.deepEqual(await readdir(temporary), []);
 });
 
@@ -47,4 +48,15 @@ test("standalone validation packs locally when no candidate is supplied", async 
   const archive = await packageArchive(temporary, temporary, undefined);
   assert.equal(archive, join(temporary, "synthetic-live-test-1.0.0.tgz"));
   assert.ok((await readFile(archive)).length > 0);
+  assert.deepEqual(archiveEntries(archive), ["package/package.json"]);
+});
+
+test("rejects malformed archive contents without packing another candidate", async (t) => {
+  const temporary = await mkdtemp(join(tmpdir(), "anthropic-archive-test-"));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  const candidate = join(temporary, "invalid.tgz");
+  await writeFile(candidate, "not an archive");
+  const archive = await packageArchive(temporary, temporary, candidate);
+  assert.throws(() => archiveEntries(archive));
+  assert.deepEqual(await readdir(temporary), ["invalid.tgz"]);
 });

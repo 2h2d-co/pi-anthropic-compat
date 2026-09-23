@@ -21,6 +21,9 @@ _.path = ["{{config_root}}/node_modules/.bin"]
 
 [tasks.check]
 description = "Run all non-writing project checks"
+# In-process tests must read Pi metadata from the repository dependency, not an inherited global
+# PI_PACKAGE_DIR that may name a different runtime.
+env = { PI_PACKAGE_DIR = "{{config_root}}/node_modules/@earendil-works/pi-coding-agent" }
 run = ["npm run check", "npm test", "npm run pack:dry"]
 
 [tasks.install]
@@ -33,6 +36,11 @@ run = '''
 set -eu
 installed_pi="$(mise where pi)/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
 test -f "$installed_pi"
+# Global prompt-patcher rules describe the parent's Pi package directory. Record it for the
+# tests, then bind the in-process runtime to the repository dependency. Each CLI child binds
+# PI_PACKAGE_DIR to its own executable's package.
+export PI_ANTHROPIC_PARENT_PACKAGE_DIR="${PI_ANTHROPIC_PARENT_PACKAGE_DIR-${PI_PACKAGE_DIR:-}}"
+export PI_PACKAGE_DIR="$PWD/node_modules/@earendil-works/pi-coding-agent"
 PI_ANTHROPIC_CLI_PATH="$PWD/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \
   npm run test:live
 PI_ANTHROPIC_LIVE_TEST=1 PI_ANTHROPIC_CLI_PATH="$installed_pi" \

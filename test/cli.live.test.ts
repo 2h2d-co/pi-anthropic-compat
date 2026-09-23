@@ -7,13 +7,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { getAgentDir, getPackageDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { RpcClient } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-client.js";
 import { object } from "../extensions/anthropic-compat/json.ts";
 import { CHECKPOINT_TYPE } from "../extensions/anthropic-compat/protocol.ts";
 import { REQUEST_TYPE } from "../extensions/anthropic-compat/tail.ts";
-import { packageArchive } from "./package-archive.ts";
-import { retargetPackageDirectory } from "./prompt-patcher.ts";
+import { archiveEntries, packageArchive } from "./package-archive.ts";
+import { isolatePromptPatcher, parentPackageDirectory } from "./prompt-patcher.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FACTS =
@@ -41,10 +41,7 @@ test(
       .split("\n")
       .map((file) => `package/${file}`)
       .sort();
-    const files = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" })
-      .trim()
-      .split("\n")
-      .sort();
+    const files = archiveEntries(archive);
     assert.deepEqual(files, expected);
     execFileSync("tar", ["-xzf", archive, "-C", temporary]);
     const packageRoot = join(temporary, "package");
@@ -60,7 +57,7 @@ test(
     const piVersion = manifest["version"];
     assert.ok(typeof piVersion === "string", "Pi manifest version is required.");
     const [major = 0, minor = 0] = piVersion.split(".").map(Number);
-    assert.ok(major > 0 || minor >= 86, `Pi ${piVersion} predates the supported range.`);
+    assert.ok(major > 0 || minor >= 87, `Pi ${piVersion} predates the supported range.`);
 
     // Isolated agent state with the real Claude login and the required prompt patcher.
     const realAgentDir = getAgentDir();
@@ -70,23 +67,19 @@ test(
     await mkdir(agent);
     await symlink(join(realAgentDir, "auth.json"), join(agent, "auth.json"));
     // The patcher's replacement targets can reference prompt text from APPEND_SYSTEM.md.
-    for (const file of [
-      "pi-system-prompt-patcher.json",
-      "anthropic-system-prompt-replacements.json",
-      "APPEND_SYSTEM.md",
-    ]) {
-      if (existsSync(join(realAgentDir, file))) {
-        if (file === "anthropic-system-prompt-replacements.json") {
-          const rules: unknown = JSON.parse(await readFile(join(realAgentDir, file), "utf8"));
-          await writeFile(
-            join(agent, file),
-            JSON.stringify(retargetPackageDirectory(rules, getPackageDir(), piRoot)),
-          );
-        } else {
-          await copyFile(join(realAgentDir, file), join(agent, file));
-        }
-      }
+    if (existsSync(join(realAgentDir, "APPEND_SYSTEM.md"))) {
+      await copyFile(join(realAgentDir, "APPEND_SYSTEM.md"), join(agent, "APPEND_SYSTEM.md"));
     }
+    // The effective global rules describe the parent's Pi package directory. Copy them for this
+    // provider and model, then point the copied targets at the selected executable's package.
+    await isolatePromptPatcher({
+      sourceAgentDir: realAgentDir,
+      agentDir: agent,
+      provider: "anthropic",
+      model: "claude-fable-5-1",
+      from: (await parentPackageDirectory()) ?? piRoot,
+      to: piRoot,
+    });
     await writeFile(
       join(agent, "settings.json"),
       JSON.stringify({

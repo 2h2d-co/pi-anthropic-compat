@@ -2,7 +2,8 @@
 
 Native Anthropic compatibility for Pi, starting with signed on-demand compaction.
 
-Requires **Pi 0.87.0 or newer** and Node.js 22.19 or newer.
+Requires **Pi 0.87.0 or newer** and Node.js 22.19 or newer. Releases are
+validated against Pi 0.87.0.
 
 ## Install
 
@@ -199,15 +200,20 @@ replay, forks, branch navigation, cancellation, and concurrent session changes.
 Retained-history tests cover safe-boundary selection, token targets, thinking,
 effort instructions, changed system/tools/content, and cold session resume.
 
+`mise run check` binds `PI_PACKAGE_DIR` to the repository's Pi dependency so
+in-process tests read that runtime's metadata rather than an inherited global
+override. Only Mise tasks set this binding; ordinary `pi` launches are unaffected.
+
 Two live tests make billed Fable 5.1 requests at `low` effort:
 
 ```sh
-mise exec -- npm run test:live
+mise run test:live
 ```
 
 Both use your existing Pi Anthropic login and global context instructions and
 require the system-prompt patcher installed under Pi's global npm directory.
-The conversations contain synthetic facts.
+The conversations contain synthetic facts. The SDK test refuses to run when
+`PI_PACKAGE_DIR` does not select the repository Pi, so run it through Mise.
 
 The SDK test requires actual signed thinking, then verifies native keep-tail
 compaction, unchanged replay, usage, and fact recovery. Two negative controls
@@ -222,21 +228,34 @@ reads the facts with Pi's built-in `read` tool, a native compaction, a
 continuation, a restart, and a resumed continuation. Tool declarations and the
 tool-call/result pair therefore pass through the summary request and replay.
 Fact recall after compaction proves the signed block replayed, because the
-extension withholds Pi's summary message once a checkpoint exists. Set
-`PI_ANTHROPIC_CLI_PATH` to test another installed Pi 0.87 `cli.js`.
+extension withholds Pi's summary message once a checkpoint exists. The test
+requires Pi 0.87 or newer. `PI_ANTHROPIC_CLI_PATH` selects the `cli.js` under
+test; the Mise task sets it for each run.
 The default test suite and CI skip both tests.
 
 Each CLI subprocess sets `PI_PACKAGE_DIR` to the selected executable's package
-directory. The test adjusts package-directory references in the temporary
-prompt-patcher match targets for that runtime. Replacement text and global
-configuration remain unchanged.
+directory, and the SDK test uses the repository Pi. Both tests resolve the
+global prompt-patcher rules the way the patcher does: the model-specific file
+for `claude-fable-5-1` wins over the provider file, and relative, absolute,
+and `~/` references are all accepted. They copy those rules into the isolated
+agent directory, rewrite package-directory references in the match targets for
+the runtime under test, and write isolated patcher settings that point at the
+copy. Replacement text and global configuration remain unchanged. The Mise task
+records the parent's `PI_PACKAGE_DIR` in `PI_ANTHROPIC_PARENT_PACKAGE_DIR`
+before binding the repository Pi, because global rules describe that parent
+runtime. The tests verify the recorded directory is a Pi package. If the rules
+describe another installation, set `PI_ANTHROPIC_PARENT_PACKAGE_DIR` to that
+package directory explicitly. When neither variable supplies a source directory,
+targets remain unchanged and the patcher reports any mismatch.
 
-Run the complete release validation with `mise run test:live`. It runs both
-tests against the development Pi dependency, then repeats the CLI test against
+`mise run test:live` is the complete release validation. It runs both tests
+against the development Pi dependency, then repeats the CLI test against
 Mise-installed Pi. It requires an existing Mise Pi installation.
 Set `PI_PACKAGE_ARCHIVE` to test a prepared archive instead of packing the
-working directory. Both CLI runs use that archive. An invalid supplied archive
-fails rather than falling back to a newly packed package.
+working directory. A relative path resolves from the current working
+directory, which is the repository root under `mise run test:live`. Both CLI runs
+use that archive. An empty value, a missing path, a non-file path, or malformed
+archive contents fail rather than falling back to a newly packed package.
 
 ## Release
 
@@ -263,8 +282,10 @@ rebuild does not repeat the live tests.
 
 If live validation fails, the generated version changes in `package.json` and
 `package-lock.json` remain staged. No release commit or tag is created by that
-failed validation. The release command requires a clean worktree, so inspect
-the remaining changes before retrying:
+failed validation. A version-update failure can leave unstaged changes, and a
+signing failure leaves the staged version changes without a release commit.
+The release command requires a clean worktree, so inspect the remaining changes
+before retrying:
 
 ```sh
 git status --short
@@ -276,6 +297,27 @@ Undo only the version changes generated by the failed attempt, then stage only
 those corrections. Preserve unrelated edits. Verify that `git status --short`
 is empty before rerunning the release command. If unrelated work remains,
 finish it separately rather than discarding it to retry the release.
+
+After the signed release commit exists, the command still verifies the commit
+signature, subject, and digest trailer, rebuilds the package from the committed
+tree, and creates and checks the tag. A failure at any of those steps leaves
+the local release commit on `main` and, if the tag was already created, the
+local tag. Nothing has been pushed. Do not rerun the release command: it
+rejects a `HEAD` that differs from `origin/main` and cannot repair the state.
+Do not push the commit or tag while signature verification, the reproducibility
+check, or tag verification is incomplete.
+Inspect read-only first:
+
+```sh
+git status --short
+git log -1 --show-signature
+git tag --points-at HEAD
+git diff origin/main..HEAD -- package.json package-lock.json
+```
+
+Removing the local release commit or tag changes local refs. Obtain explicit
+approval after reviewing the exact refs, the failure, and a recovery path.
+Never replace a published tag. Do not automate recovery in the release command.
 
 The `.github/npm-package-files` allowlist defines the complete public package.
 Do not publish credentials, test fixtures, session data, or development notes.

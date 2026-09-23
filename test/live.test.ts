@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createAgentSession,
   DefaultResourceLoader,
   getAgentDir,
+  getPackageDir,
   ModelRuntime,
   SessionManager,
   SettingsManager,
@@ -16,6 +18,9 @@ import extension from "../extensions/index.ts";
 import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
 import { activeCheckpoint } from "../extensions/anthropic-compat/runtime.ts";
 import { messageHash } from "../extensions/anthropic-compat/tail.ts";
+import { isolatePromptPatcher, parentPackageDirectory } from "./prompt-patcher.ts";
+
+const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 test(
   "live Fable 5.1 low-effort retained thinking with enforced positive and negative controls",
@@ -32,6 +37,14 @@ test(
       join(root, ".pi", "pi-anthropic-compat.json"),
       JSON.stringify({ enabled: true, keepRecentTokens: 1 }),
     );
+    // The in-process runtime must use the repository dependency's metadata, not an inherited
+    // global package directory. `mise run test:live` binds PI_PACKAGE_DIR accordingly.
+    const packageDir = getPackageDir();
+    assert.equal(
+      await realpath(packageDir),
+      await realpath(join(repository, "node_modules/@earendil-works/pi-coding-agent")),
+      "Run the live tests through `mise run test:live` so PI_PACKAGE_DIR selects the repository Pi.",
+    );
     const realAgentDir = getAgentDir();
     const patcher = join(
       realAgentDir,
@@ -45,6 +58,22 @@ test(
       existsSync(patcher),
       "Install the system-prompt patcher before running a live Anthropic test.",
     );
+    // The patcher reads its settings from PI_CODING_AGENT_DIR on every request. Give it an
+    // isolated copy of the effective global rules whose targets name this package directory.
+    await isolatePromptPatcher({
+      sourceAgentDir: realAgentDir,
+      agentDir,
+      provider: "anthropic",
+      model: "claude-fable-5-1",
+      from: (await parentPackageDirectory()) ?? packageDir,
+      to: packageDir,
+    });
+    const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
+    process.env["PI_CODING_AGENT_DIR"] = agentDir;
+    t.after(() => {
+      if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+      else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
+    });
     const runtime = await ModelRuntime.create({
       authPath: join(realAgentDir, "auth.json"),
       modelsPath: null,
