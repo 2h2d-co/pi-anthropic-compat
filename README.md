@@ -3,7 +3,7 @@
 Native Anthropic compatibility for Pi, starting with signed on-demand compaction.
 
 Requires **Pi 0.87.0 or newer** and Node.js 22.19 or newer. Releases are
-validated against Pi 0.87.0.
+validated against Pi 0.87.1. Opus 5.5 requires Pi 0.87.1's model catalog.
 
 ## Install
 
@@ -100,7 +100,7 @@ summaries still replay until another Pi compaction replaces them.
 This version supports the direct Claude API and these documented model IDs:
 
 - `claude-sonnet-5`, `claude-sonnet-4-6`
-- `claude-opus-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`
+- `claude-opus-5-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`
 - `claude-fable-5-1`, `claude-fable-5`
 - `claude-mythos-5-1`, `claude-mythos-5`, `claude-mythos-preview`
 
@@ -204,25 +204,25 @@ effort instructions, changed system/tools/content, and cold session resume.
 in-process tests read that runtime's metadata rather than an inherited global
 override. Only Mise tasks set this binding; ordinary `pi` launches are unaffected.
 
-Two live tests make billed Fable 5.1 requests at `low` effort:
+Live tests make billed Fable 5.1 and Opus 5.5 requests at `low` effort:
 
 ```sh
 mise run test:live
 ```
 
-Both use your existing Pi Anthropic login and global context instructions and
+They use your existing Pi Anthropic login and global context instructions and
 require the system-prompt patcher installed under Pi's global npm directory.
-The conversations contain synthetic facts. The SDK test refuses to run when
+The conversations contain synthetic facts. The SDK tests refuse to run when
 `PI_PACKAGE_DIR` does not select the repository Pi, so run it through Mise.
 
-The SDK test requires actual signed thinking, then verifies native keep-tail
-compaction, unchanged replay, usage, and fact recovery. Two negative controls
+The SDK tests require actual signed thinking for each model, then verify native
+keep-tail compaction, unchanged replay, usage, and fact recovery. Two negative controls
 must return thinking-prefix errors after deliberate system and history changes.
 Low effort can omit thinking on simple tasks, so the fixture includes a
 multi-step arithmetic problem. A response without thinking fails the test.
 
-The CLI test uses `PI_PACKAGE_ARCHIVE` when supplied and otherwise packs the
-extension locally. It loads the archive through the shipped Pi executable in
+The CLI tests use `PI_PACKAGE_ARCHIVE` when supplied and otherwise pack the
+extension locally. Each loads the archive through the shipped Pi executable in
 RPC mode with an isolated agent directory and runs a turn that
 reads the facts with Pi's built-in `read` tool, a native compaction, a
 continuation, a restart, and a resumed continuation. Tool declarations and the
@@ -231,12 +231,13 @@ Fact recall after compaction proves the signed block replayed, because the
 extension withholds Pi's summary message once a checkpoint exists. The test
 requires Pi 0.87 or newer. `PI_ANTHROPIC_CLI_PATH` selects the `cli.js` under
 test; the Mise task sets it for each run.
-The default test suite and CI skip both tests.
+Fable tests retain recent messages. Opus 5.5 tests cover both full-history and
+retained-message compaction. The default test suite and CI skip live tests.
 
 Each CLI subprocess sets `PI_PACKAGE_DIR` to the selected executable's package
-directory, and the SDK test uses the repository Pi. Both tests resolve the
+directory, and the SDK tests use the repository Pi. Both test suites resolve the
 global prompt-patcher rules the way the patcher does: the model-specific file
-for `claude-fable-5-1` wins over the provider file, and relative, absolute,
+for the model under test wins over the provider file, and relative, absolute,
 and `~/` references are all accepted. They copy those rules into the isolated
 agent directory, rewrite package-directory references in the match targets for
 the runtime under test, and write isolated patcher settings that point at the
@@ -248,12 +249,14 @@ describe another installation, set `PI_ANTHROPIC_PARENT_PACKAGE_DIR` to that
 package directory explicitly. When neither variable supplies a source directory,
 targets remain unchanged and the patcher reports any mismatch.
 
-`mise run test:live` is the complete release validation. It runs both tests
-against the development Pi dependency, then repeats the CLI test against
-Mise-installed Pi. It requires an existing Mise Pi installation.
+`mise run test:live` is the complete release validation. It runs the SDK and CLI
+tests against the Pi 0.87.1 development dependency, then repeats the Fable CLI
+test against Mise-installed Pi. The installed-runtime check retains coverage
+of Pi 0.87.0, whose catalog does not include Opus 5.5. It requires an existing
+Mise Pi installation.
 Set `PI_PACKAGE_ARCHIVE` to test a prepared archive instead of packing the
 working directory. A relative path resolves from the current working
-directory, which is the repository root under `mise run test:live`. Both CLI runs
+directory, which is the repository root under `mise run test:live`. All CLI runs
 use that archive. An empty value, a missing path, a non-file path, or malformed
 archive contents fail rather than falling back to a newly packed package.
 

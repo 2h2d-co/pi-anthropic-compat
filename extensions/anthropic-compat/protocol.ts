@@ -15,6 +15,7 @@ const MODELS = new Set([
   "claude-mythos-5",
   "claude-mythos-preview",
   "claude-opus-5",
+  "claude-opus-5-5",
   "claude-opus-4-8",
   "claude-opus-4-7",
   "claude-opus-4-6",

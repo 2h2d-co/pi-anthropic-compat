@@ -17,6 +17,13 @@ import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai"
 
 test("only documented direct Anthropic models are eligible", () => {
   assert.equal(eligibleModel(model), true);
+  assert.equal(eligibleModel({ ...model, id: "claude-opus-5-5" }), true);
+  assert.equal(eligibleModel({ ...model, id: "claude-opus-5-5-preview" }), false);
+  assert.equal(
+    eligibleModel({ ...model, id: "claude-opus-5-5", baseUrl: "https://proxy.invalid" }),
+    false,
+  );
+  assert.equal(eligibleModel({ ...model, id: "claude-opus-5-5", provider: "openrouter" }), false);
   assert.equal(eligibleModel({ ...model, id: "claude-haiku-4-5" }), false);
   assert.equal(eligibleModel({ ...model, baseUrl: "https://proxy.invalid" }), false);
   assert.equal(eligibleModel({ ...model, provider: "openrouter" }), false);

@@ -44,5 +44,5 @@ export PI_PACKAGE_DIR="$PWD/node_modules/@earendil-works/pi-coding-agent"
 PI_ANTHROPIC_CLI_PATH="$PWD/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \
   npm run test:live
 PI_ANTHROPIC_LIVE_TEST=1 PI_ANTHROPIC_CLI_PATH="$installed_pi" \
-  node --test test/cli.live.test.ts
+  node --test --test-name-pattern=claude-fable-5-1 test/cli.live.test.ts
 '''

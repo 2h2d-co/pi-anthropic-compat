@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-09-23
+
+### Added
+
+- Native compaction and retained-history replay for Claude Opus 5.5 on Pi 0.87.1.
+
 ## [0.0.4] - 2026-09-23
 
 ### Changed
@@ -42,7 +48,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Strict thinking-prefix enforcement for retained history and a live Fable 5.1 low-effort test with rejection controls.
 - Live packaged-CLI test that exercises native compaction, replay, and resume through the shipped Pi executable.
 
-[Unreleased]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.1...v0.0.2

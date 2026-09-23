@@ -11,6 +11,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import {
   registerCompatibility,
   activeCheckpoint,
@@ -28,6 +29,7 @@ async function setup(
     persistent?: boolean;
     keepRecentTokens?: number;
     managed?: boolean;
+    modelId?: "claude-opus-5-5";
     /** Replace the serialized system prompt at the payload boundary. Default: true. */
     patchSystem?: boolean;
   } = {},
@@ -54,7 +56,12 @@ async function setup(
   let onSummary: (() => void) | undefined;
   let system = "Patched synthetic system.";
   let section: string | undefined;
-  const selected = options.managed ? { ...model, id: "claude-fable-5-1" } : model;
+  const selected = options.modelId
+    ? getModel("anthropic", options.modelId)
+    : options.managed
+      ? { ...model, id: "claude-fable-5-1" }
+      : model;
+  assert.ok(selected);
   const fetcher: typeof fetch = async (input, init) => {
     const request = new Request(input, init);
     assert.equal(new URL(request.url).origin, "https://api.anthropic.com");
@@ -197,6 +204,35 @@ test("real Pi session compacts, replays exactly one native block, and retains or
   assert.ok(repeated);
   assert.deepEqual(objects(repeated["messages"])[0], { role: "assistant", content: [block] });
 });
+
+for (const keepRecentTokens of [0, 1]) {
+  test(`Opus 5.5 compacts and replays with keepRecentTokens=${keepRecentTokens}`, async (t) => {
+    const { session, manager, requests } = await setup(t, {
+      modelId: "claude-opus-5-5",
+      managed: true,
+      keepRecentTokens,
+    });
+    await session.prompt("Remember the synthetic project Lantern.");
+    await session.compact();
+    const saved = activeCheckpoint(manager.getBranch());
+    assert.equal(saved?.model, "claude-opus-5-5");
+    assert.equal(Boolean(saved?.retained), keepRecentTokens > 0);
+    await session.prompt("Continue.");
+    const latest = requests.at(-1);
+    assert.ok(latest);
+    assert.equal(latest["model"], "claude-opus-5-5");
+    assert.deepEqual(objects(latest["messages"])[0], {
+      role: "assistant",
+      content: [block],
+    });
+    if (saved?.retained) {
+      assert.deepEqual(
+        objects(latest["messages"]).slice(1, 1 + saved.retained.messages.length),
+        saved.retained.messages,
+      );
+    }
+  });
+}
 
 test("native replay and manual compaction survive extension reload and branch navigation", async (t) => {
   const { session, manager, requests, create } = await setup(t, { persistent: true });
