@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import test from "node:test";
 import { packageArchive } from "./package-archive.ts";
 
@@ -12,6 +12,17 @@ test("uses the supplied candidate without packing the working directory", async 
   await writeFile(candidate, "synthetic candidate");
   // This directory has no package.json, so an accidental npm pack would fail.
   assert.equal(await packageArchive(temporary, temporary, candidate), await realpath(candidate));
+  assert.equal(await readFile(candidate, "utf8"), "synthetic candidate");
+  assert.deepEqual(await readdir(temporary), ["candidate.tgz"]);
+});
+
+test("resolves a relative candidate path from the working directory", async (t) => {
+  const temporary = await mkdtemp(join(tmpdir(), "anthropic-archive-test-"));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  const candidate = join(temporary, "candidate.tgz");
+  await writeFile(candidate, "synthetic candidate");
+  const supplied = relative(process.cwd(), candidate);
+  assert.equal(await packageArchive(temporary, temporary, supplied), await realpath(candidate));
   assert.equal(await readFile(candidate, "utf8"), "synthetic candidate");
   assert.deepEqual(await readdir(temporary), ["candidate.tgz"]);
 });

@@ -3,11 +3,11 @@ import childProcess, { type SpawnSyncOptions } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const root = fileURLToPath(new URL("../", import.meta.url));
+const root = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const candidate = "synthetic release archive";
 const digest = createHash("sha256").update(candidate).digest("hex");
 const files = readFileSync(join(root, ".github/npm-package-files"), "utf8")
@@ -15,12 +15,17 @@ const files = readFileSync(join(root, ".github/npm-package-files"), "utf8")
   .split("\n")
   .map((path) => ({ path, mode: 0o644 }));
 
-for (const liveStatus of [0, 1]) {
-  test(`release ${liveStatus === 0 ? "validates before signing" : "stops on live failure"}`, async (t) => {
+for (const [liveStatus, description] of [
+  [0, "validates before signing"],
+  [1, "stops on live failure"],
+  ["spawn-error", "stops when the live process cannot start"],
+] as const) {
+  test(`release ${description}`, async (t) => {
     const previousArgv = process.argv;
     const previousNpm = process.env["npm_execpath"];
     const calls: string[] = [];
     const archives: string[] = [];
+    const spawnError = Object.assign(new Error("spawn mise ENOENT"), { code: "ENOENT" });
     let signed = false;
     process.argv = [process.execPath, join(root, "scripts/release.ts"), "0.0.3"];
     process.env["npm_execpath"] = "synthetic-npm";
@@ -32,7 +37,8 @@ for (const liveStatus of [0, 1]) {
         const operation = [command === process.execPath ? "npm" : command, ...args].join(" ");
         calls.push(operation);
         let stdout = "";
-        let status = 0;
+        let status: number | null = 0;
+        let error: Error | undefined;
         if (command === "git") {
           const verb = args[0];
           if (verb === "branch") stdout = "main";
@@ -67,14 +73,28 @@ for (const liveStatus of [0, 1]) {
           } else assert.equal(verb, "version");
         } else if (command === "mise") {
           assert.deepEqual(args, ["run", "test:live"]);
+          assert.equal(options.cwd, root);
           assert.equal(options.env?.["PI_PACKAGE_ARCHIVE"], archives[0]);
           assert.equal(
             readFileSync(String(options.env?.["PI_PACKAGE_ARCHIVE"]), "utf8"),
             candidate,
           );
-          status = liveStatus;
+          if (liveStatus === "spawn-error") {
+            error = spawnError;
+            status = null;
+          } else {
+            status = liveStatus;
+          }
         } else throw new Error(`Unexpected child command: ${operation}`);
-        return { pid: 0, output: [null, stdout, ""], stdout, stderr: "", status, signal: null };
+        return {
+          pid: 0,
+          output: [null, stdout, ""],
+          stdout,
+          stderr: "",
+          status,
+          signal: null,
+          error,
+        };
       },
     );
     syncBuiltinESMExports();
@@ -88,7 +108,9 @@ for (const liveStatus of [0, 1]) {
 
     const script = new URL(`../scripts/release.ts?liveStatus=${liveStatus}`, import.meta.url);
     if (liveStatus === 0) await import(script.href);
-    else await assert.rejects(import(script.href), /mise run test:live exited with 1/);
+    else if (liveStatus === "spawn-error") {
+      await assert.rejects(import(script.href), (error: unknown) => error === spawnError);
+    } else await assert.rejects(import(script.href), /mise run test:live exited with 1/);
 
     assert.equal(calls.filter((call) => call === "mise run test:live").length, 1);
     assert.equal(signed, liveStatus === 0);

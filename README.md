@@ -215,8 +215,9 @@ must return thinking-prefix errors after deliberate system and history changes.
 Low effort can omit thinking on simple tasks, so the fixture includes a
 multi-step arithmetic problem. A response without thinking fails the test.
 
-The CLI test packs the extension, loads the archive through the shipped Pi
-executable in RPC mode with an isolated agent directory, and runs a turn that
+The CLI test uses `PI_PACKAGE_ARCHIVE` when supplied and otherwise packs the
+extension locally. It loads the archive through the shipped Pi executable in
+RPC mode with an isolated agent directory and runs a turn that
 reads the facts with Pi's built-in `read` tool, a native compaction, a
 continuation, a restart, and a resumed continuation. Tool declarations and the
 tool-call/result pair therefore pass through the summary request and replay.
