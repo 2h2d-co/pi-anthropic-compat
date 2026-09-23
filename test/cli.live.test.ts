@@ -29,11 +29,14 @@ const READ_FACTS =
  * the real Anthropic API. The compaction summary message is withheld from the model once a
  * signed checkpoint exists, so fact recall after compaction proves the signed block replayed.
  */
-for (const { modelId, keepRecentTokens } of [
-  { modelId: "claude-fable-5-1", keepRecentTokens: 1 },
-  { modelId: "claude-opus-5-5", keepRecentTokens: 0 },
-  { modelId: "claude-opus-5-5", keepRecentTokens: 1 },
-]) {
+const scenarios = [{ modelId: "claude-fable-5-1", keepRecentTokens: 1 }];
+if (process.env["PI_ANTHROPIC_CLI_BASELINE_ONLY"] !== "1") {
+  scenarios.push(
+    { modelId: "claude-opus-5-5", keepRecentTokens: 0 },
+    { modelId: "claude-opus-5-5", keepRecentTokens: 1 },
+  );
+}
+for (const { modelId, keepRecentTokens } of scenarios) {
   test(
     `live packaged Pi CLI ${modelId} compaction, replay, and resume (keepRecentTokens=${keepRecentTokens})`,
     { skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1", timeout: 300_000 },
@@ -137,6 +140,13 @@ for (const { modelId, keepRecentTokens } of [
       let client = new RpcClient(clientOptions);
       t.after(async () => client.stop());
       await client.start();
+      const state = await client.getState();
+      assert.equal(state.model?.id, modelId);
+      assert.notEqual(
+        state.model?.name,
+        modelId,
+        "The selected Pi catalog must contain the model rather than synthesizing an unknown ID.",
+      );
       assert.ok(
         (await client.getCommands()).some((command) => command.name === "anthropic-settings"),
       );
@@ -151,7 +161,8 @@ for (const { modelId, keepRecentTokens } of [
           .filter((message) => message.role === "assistant")
           .at(-1);
         assert.ok(assistant);
-        assert.equal(assistant.model, modelId, "The provider must not substitute another model.");
+        assert.equal(assistant.model, modelId, "Pi must preserve the selected model.");
+        assert.equal(assistant.responseModel, undefined, "Anthropic must not substitute a model.");
         assert.equal(assistant.stopReason, "stop", assistant.errorMessage);
         const text = assistant.content.flatMap((item) => (item.type === "text" ? [item.text] : []));
         assert.match(text.join(""), pattern);

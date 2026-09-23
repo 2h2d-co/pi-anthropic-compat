@@ -251,9 +251,10 @@ targets remain unchanged and the patcher reports any mismatch.
 
 `mise run test:live` is the complete release validation. It runs the SDK and CLI
 tests against the Pi 0.87.1 development dependency, then repeats the Fable CLI
-test against Mise-installed Pi. The installed-runtime check retains coverage
-of Pi 0.87.0, whose catalog does not include Opus 5.5. It requires an existing
-Mise Pi installation.
+test against Mise-installed Pi. The installed-runtime check requires Pi 0.87 or
+newer and uses Fable for baseline coverage. Opus 5.5 coverage always uses the
+repository's Pi 0.87.1 catalog. Live test files run sequentially to limit
+concurrent requests against the same account.
 Set `PI_PACKAGE_ARCHIVE` to test a prepared archive instead of packing the
 working directory. A relative path resolves from the current working
 directory, which is the repository root under `mise run test:live`. All CLI runs

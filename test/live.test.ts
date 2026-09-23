@@ -177,7 +177,8 @@ for (const modelId of ["claude-fable-5-1", "claude-opus-5-5"]) {
         first?.role === "assistant" && first.stopReason === "stop",
         "The initial synthetic turn must succeed before compaction.",
       );
-      assert.equal(first.model, model.id, "The provider must not fall back to another model.");
+      assert.equal(first.model, model.id, "Pi must preserve the selected model.");
+      assert.equal(first.responseModel, undefined, "Anthropic must not substitute a model.");
       assert.ok(
         first.content.some((item) => item.type === "thinking" && Boolean(item.thinkingSignature)),
         "Actual signed thinking is required. A successful response without thinking proves nothing.",
@@ -205,6 +206,7 @@ for (const modelId of ["claude-fable-5-1", "claude-opus-5-5"]) {
         last?.role === "assistant" && last.stopReason === "stop",
         "Expected a successful continuation.",
       );
+      assert.equal(last.responseModel, undefined, "Anthropic must not substitute a model.");
       const text = last.content
         .filter((item) => item.type === "text")
         .map((item) => item.text)
