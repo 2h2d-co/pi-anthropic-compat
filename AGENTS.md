@@ -10,6 +10,7 @@
 - Keep request-boundary records compact. Persist hashes rather than a complete transcript copy for every request.
 - Validate retained thinking with Fable 5.1 at low effort, real signed thinking blocks, explicit error enforcement, and rejection controls. Never increase live-test effort without authorization.
 - The release script must run `mise run test:live` against its exact candidate archive before signing. This runs the SDK and packaged-CLI tests, then repeats the CLI test against Mise-installed Pi. A missing prerequisite or failed live test blocks signing and tagging. Keep the post-commit reproducibility rebuild free of duplicate live requests. SDK tests alone do not establish runtime compatibility.
+- Bind each packaged-CLI test's `PI_PACKAGE_DIR` to the selected executable's package directory. Adjust matching package paths only in temporary prompt-patcher targets. Preserve replacement text and global configuration.
 - Read prompt and tool declarations from transcript system messages, never from `getSystemPrompt()` or tool lists. Serialize retained tails behind the prompt snapshot Pi records on compaction entries.
 - Background compaction remains out of scope.
 - Preserve unrelated concurrent filesystem changes. Ask only when they directly conflict with scoped work.

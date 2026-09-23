@@ -7,12 +7,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, getPackageDir } from "@earendil-works/pi-coding-agent";
 import { RpcClient } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-client.js";
 import { object } from "../extensions/anthropic-compat/json.ts";
 import { CHECKPOINT_TYPE } from "../extensions/anthropic-compat/protocol.ts";
 import { REQUEST_TYPE } from "../extensions/anthropic-compat/tail.ts";
 import { packageArchive } from "./package-archive.ts";
+import { retargetPackageDirectory } from "./prompt-patcher.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FACTS =
@@ -75,7 +76,15 @@ test(
       "APPEND_SYSTEM.md",
     ]) {
       if (existsSync(join(realAgentDir, file))) {
-        await copyFile(join(realAgentDir, file), join(agent, file));
+        if (file === "anthropic-system-prompt-replacements.json") {
+          const rules: unknown = JSON.parse(await readFile(join(realAgentDir, file), "utf8"));
+          await writeFile(
+            join(agent, file),
+            JSON.stringify(retargetPackageDirectory(rules, getPackageDir(), piRoot)),
+          );
+        } else {
+          await copyFile(join(realAgentDir, file), join(agent, file));
+        }
       }
     }
     await writeFile(
@@ -95,9 +104,9 @@ test(
       cwd: temporary,
       provider: "anthropic",
       model: "claude-fable-5-1",
-      // PI_PACKAGE_DIR stays inherited: the patcher targets Pi's documentation path.
       env: {
         PI_CODING_AGENT_DIR: agent,
+        PI_PACKAGE_DIR: piRoot,
         PI_TELEMETRY: "0",
       },
       args: [
@@ -118,9 +127,8 @@ test(
         patcher,
       ],
     };
-    // Without the package-root override, the executable reports its own embedded version.
+    // Check the same package-directory selection used for the actual RPC session.
     const versionEnv: NodeJS.ProcessEnv = { ...process.env, ...clientOptions.env };
-    delete versionEnv["PI_PACKAGE_DIR"];
     assert.equal(
       execFileSync(process.execPath, [cli, "--version"], {
         env: versionEnv,

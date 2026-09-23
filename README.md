@@ -226,6 +226,11 @@ extension withholds Pi's summary message once a checkpoint exists. Set
 `PI_ANTHROPIC_CLI_PATH` to test another installed Pi 0.87 `cli.js`.
 The default test suite and CI skip both tests.
 
+Each CLI subprocess sets `PI_PACKAGE_DIR` to the selected executable's package
+directory. The test adjusts package-directory references in the temporary
+prompt-patcher match targets for that runtime. Replacement text and global
+configuration remain unchanged.
+
 Run the complete release validation with `mise run test:live`. It runs both
 tests against the development Pi dependency, then repeats the CLI test against
 Mise-installed Pi. It requires an existing Mise Pi installation.
