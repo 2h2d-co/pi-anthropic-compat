@@ -6,16 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-09-25
+
 ### Fixed
 
-- Restore session settings across extension reloads, restarts, and resumes.
-  Session preferences no longer disappear when the Pi process ends.
 - Separate menu sections with blank rows, using compact spacing on short terminals.
 - Align setting names on the left and values in a stable column on the right.
   Render the search placeholder in muted gray instead of ordinary input text.
   Keep Save and Discard hints visible in narrow terminals.
 - Align settings with the Codex menu: Enter changes values, Ctrl+S saves and
-  applies drafts, and Escape discards unsaved edits. Search no longer prevents
+  applies drafts, and Escape discards unapplied drafts. Search no longer prevents
   changing settings.
 - Save only changed overrides, preserve inheritance and external edits, and
   report conflicting saves without overwriting them.
@@ -23,7 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Apply to session without changing configuration files. Reopening settings shows
-  active session values. Ctrl+S can save session-only changes later.
+  active session values, including after reload, restart, or resume.
+  Ctrl+S can save session-only changes later.
 - Numeric editors with presets and custom values, configuration-source labels,
   inherited-value resets, and keyboard, focus, and mouse support.
 
@@ -69,7 +70,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Strict thinking-prefix enforcement for retained history and a live Fable 5.1 low-effort test with rejection controls.
 - Live packaged-CLI test that exercises native compaction, replay, and resume through the shipped Pi executable.
 
-[Unreleased]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.6...HEAD
+[0.0.6]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.2...v0.0.3

@@ -41,6 +41,7 @@ test -f "$installed_pi"
 # PI_PACKAGE_DIR to its own executable's package.
 export PI_ANTHROPIC_PARENT_PACKAGE_DIR="${PI_ANTHROPIC_PARENT_PACKAGE_DIR-${PI_PACKAGE_DIR:-}}"
 export PI_PACKAGE_DIR="$PWD/node_modules/@earendil-works/pi-coding-agent"
+node --test test/settings-cli.test.ts
 PI_ANTHROPIC_CLI_PATH="$PWD/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \
   PI_ANTHROPIC_CLI_BASELINE_ONLY=0 npm run test:live
 PI_ANTHROPIC_LIVE_TEST=1 PI_ANTHROPIC_CLI_PATH="$installed_pi" \
