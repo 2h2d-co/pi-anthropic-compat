@@ -4,16 +4,17 @@ import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getKeybindings, type Component } from "@earendil-works/pi-tui";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { initTheme, SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   registerSettings,
+  loadSessionConfig,
   settingFields,
   type SettingsContext,
   type SettingsHandler,
 } from "../extensions/anthropic-compat/settings.ts";
 import { DEFAULT_CONFIG } from "../extensions/anthropic-compat/config.ts";
 
-test("Anthropic session settings reopen live and reset on session start", async (t) => {
+test("Anthropic session settings restore on reload and stay isolated from new sessions", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "anthropic-settings-"));
   const previous = process.env["PI_CODING_AGENT_DIR"];
   process.env["PI_CODING_AGENT_DIR"] = join(root, "agent");
@@ -27,15 +28,15 @@ test("Anthropic session settings reopen live and reset on session start", async 
   let current = { ...DEFAULT_CONFIG };
   let handler: SettingsHandler | undefined;
   let component: Component | undefined;
-  let startSession: () => void = () => {};
+  const manager = SessionManager.inMemory(root);
   let saved: () => void = () => {};
   const applied = new Promise<void>((resolve) => {
     saved = resolve;
   });
   registerSettings(
     {
-      on: (_event, listener) => {
-        startSession = listener;
+      appendEntry: (type, data) => {
+        manager.appendCustomEntry(type, data);
       },
       registerCommand: (_name, command) => {
         handler = command.handler;
@@ -60,7 +61,7 @@ test("Anthropic session settings reopen live and reset on session start", async 
     isProjectTrusted: () => false,
     isIdle: () => true,
     waitForIdle: async () => {},
-    sessionManager: { getSessionId: () => "synthetic" },
+    sessionManager: manager,
     ui: {
       notify: (message) => assert.fail(message),
       custom: (factory) =>
@@ -96,6 +97,8 @@ test("Anthropic session settings reopen live and reset on session start", async 
   await assert.rejects(readFile(file), { code: "ENOENT" });
   component.handleInput?.("\u001b");
   await pending;
+  current = loadSessionConfig(ctx);
+  assert.equal(current.enabled, true);
   const reopened = new Promise<void>((resolve) => {
     opened = resolve;
   });
@@ -104,8 +107,8 @@ test("Anthropic session settings reopen live and reset on session start", async 
   assert.match(component.render(120).join("\n"), /Native compaction\s+on ~/);
   component.handleInput?.("\u001b");
   await pendingReopen;
-  current = { ...DEFAULT_CONFIG };
-  startSession();
+  manager.newSession();
+  current = loadSessionConfig(ctx);
   const restarted = new Promise<void>((resolve) => {
     opened = resolve;
   });

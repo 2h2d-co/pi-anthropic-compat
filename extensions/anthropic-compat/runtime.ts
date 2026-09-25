@@ -18,7 +18,7 @@ import {
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import { compactRequest, supportsCompaction } from "./client.ts";
-import { loadConfig, type Config } from "./config.ts";
+import type { Config } from "./config.ts";
 import { object, objects, type JsonObject } from "./json.ts";
 import {
   BOUNDARY_TYPE,
@@ -31,7 +31,7 @@ import {
   replay,
   template,
 } from "./protocol.ts";
-import { registerSettings } from "./settings.ts";
+import { loadSessionConfig, registerSettings } from "./settings.ts";
 import {
   REQUEST_TYPE,
   bindingTemplate,
@@ -124,8 +124,8 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
   let transform: SimpleStreamOptions["onPayload"];
   let transformModel: string | undefined;
 
-  const configuration = (ctx: Pick<ExtensionContext, "cwd" | "isProjectTrusted">): Config => {
-    config ??= loadConfig(ctx.cwd, ctx.isProjectTrusted()).config;
+  const configuration = (ctx: Parameters<typeof loadSessionConfig>[0]): Config => {
+    config ??= loadSessionConfig(ctx);
     return config;
   };
   const reset = () => {

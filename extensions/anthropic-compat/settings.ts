@@ -10,8 +10,13 @@ import {
   type SettingsField,
   type SettingsMenuFactory,
 } from "../settings-menu.ts";
-import { SettingsStore, type SettingsSessionState } from "../settings-store.ts";
-import { parseConfig, type Config } from "./config.ts";
+import { SettingsStore } from "../settings-store.ts";
+import {
+  readSessionSettings,
+  sessionSettingsEntry,
+  type SettingsSessionContext,
+} from "../settings-session.ts";
+import { loadConfig, parseConfig, type Config } from "./config.ts";
 import { eligibleModel } from "./protocol.ts";
 import { object } from "./json.ts";
 
@@ -47,24 +52,32 @@ export const settingFields: SettingsField[] = [
   },
 ];
 export type SettingsState = {
-  get: (ctx: Pick<SettingsContext, "cwd" | "isProjectTrusted">) => Config;
+  get: (ctx: Pick<SettingsContext, "cwd" | "isProjectTrusted" | "sessionManager">) => Config;
   set: (config: Config) => void;
 };
 export type SettingsContext = Pick<
   ExtensionCommandContext,
   "cwd" | "isProjectTrusted" | "mode" | "model" | "isIdle" | "waitForIdle"
-> & {
-  sessionManager: Pick<ExtensionCommandContext["sessionManager"], "getSessionId">;
-  ui: {
-    custom: <T>(factory: SettingsMenuFactory<T>) => Promise<T>;
-    notify: ExtensionCommandContext["ui"]["notify"];
+> &
+  SettingsSessionContext & {
+    ui: {
+      custom: <T>(factory: SettingsMenuFactory<T>) => Promise<T>;
+      notify: ExtensionCommandContext["ui"]["notify"];
+    };
   };
-};
 export type SettingsHandler = (args: string, ctx: SettingsContext) => Promise<void>;
+export const SESSION_SETTINGS_TYPE = "pi-anthropic-compat:settings";
+
+export function loadSessionConfig(
+  ctx: Pick<SettingsContext, "cwd" | "isProjectTrusted" | "sessionManager">,
+): Config {
+  const saved = readSessionSettings(ctx, SESSION_SETTINGS_TYPE, settingFields);
+  return parseConfig(saved.values, loadConfig(ctx.cwd, ctx.isProjectTrusted()).config);
+}
 
 export function registerSettings(
   pi: {
-    on: (event: "session_start", handler: () => void) => void;
+    appendEntry: (customType: string, data: unknown) => void;
     registerCommand: (
       name: string,
       options: { description: string; handler: SettingsHandler },
@@ -72,10 +85,6 @@ export function registerSettings(
   },
   state: SettingsState,
 ): void {
-  let sessionState: SettingsSessionState = { changes: {} };
-  pi.on("session_start", () => {
-    sessionState = { changes: {} };
-  });
   pi.registerCommand("anthropic-settings", {
     description: "Configure native Anthropic compatibility",
     handler: async (_args, ctx) => {
@@ -98,7 +107,7 @@ export function registerSettings(
             store,
             snapshot: await store.load(),
             current: { ...state.get(ctx) },
-            session: sessionState,
+            session: readSessionSettings(ctx, SESSION_SETTINGS_TYPE, settingFields).session,
             fields: settingFields,
             status: (values) =>
               !values["enabled"]
@@ -122,7 +131,13 @@ export function registerSettings(
               }
               if (!ctx.isIdle()) throw new Error("Pi is busy. Retry when idle.");
             },
-            apply: (values) => state.set(parseConfig(values)),
+            apply: (values, sessionState) => {
+              pi.appendEntry(
+                SESSION_SETTINGS_TYPE,
+                sessionSettingsEntry(session, values, sessionState, {}),
+              );
+              state.set(parseConfig(values));
+            },
           }),
         );
       } catch (error) {

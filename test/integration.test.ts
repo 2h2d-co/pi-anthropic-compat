@@ -19,6 +19,9 @@ import {
 } from "../extensions/anthropic-compat/runtime.ts";
 import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
 import { block, model, summaryResponse, textResponse } from "./fixtures.ts";
+import { SESSION_SETTINGS_TYPE } from "../extensions/anthropic-compat/settings.ts";
+import { DEFAULT_CONFIG } from "../extensions/anthropic-compat/config.ts";
+import { sessionSettingsEntry } from "../extensions/settings-session.ts";
 
 async function setup(
   t: TestContext,
@@ -168,6 +171,32 @@ async function setup(
     },
   };
 }
+
+test("native compaction restores session configuration before requests after reload and resume", async (t) => {
+  const { session, manager, create, requests } = await setup(t, {
+    enabled: false,
+    persistent: true,
+  });
+  await session.prompt("Remember the synthetic project Lantern.");
+  manager.appendCustomEntry(
+    SESSION_SETTINGS_TYPE,
+    sessionSettingsEntry(
+      manager.getSessionId(),
+      { ...DEFAULT_CONFIG, enabled: true },
+      { changes: {} },
+      {},
+    ),
+  );
+  await session.reload();
+  await session.compact();
+  assert.ok(requests.at(-1)?.["compaction"]);
+  const file = manager.getSessionFile();
+  assert.ok(file);
+  const resumed = await create(SessionManager.open(file));
+  await resumed.prompt("Continue after resume.");
+  await resumed.compact();
+  assert.ok(requests.at(-1)?.["compaction"]);
+});
 
 test("tree navigation retains active session configuration instead of reloading files", async (t) => {
   const { session, manager, requests, configFile } = await setup(t);

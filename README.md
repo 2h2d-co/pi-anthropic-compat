@@ -192,9 +192,13 @@ Reopening shows active session values, not freshly read file values. `*` marks
 an unapplied draft. `~` marks an active session override or a value that differs
 from the saved configuration. Details shows the saved value when it differs.
 Ctrl+S also persists changes previously applied only to the session.
-Session-only changes survive closing the menu and navigating the session tree.
-They reset when starting or switching sessions, reloading extensions, or restarting
-Pi. They are not stored in the session transcript.
+Session settings are stored as extension state entries in the Pi session,
+outside model context. They survive menu closure, tree navigation, extension
+reload, process restart, and switching away and back. Resuming the same session
+restores its settings before provider operations. A new session, fork, or clone
+has a separate identity and starts from configuration files.
+Pi's `--no-session` mode cannot be resumed after exit. Pi also defers creating a
+new session file until its first assistant message.
 
 Applying and saving wait for Pi to become idle. Escape cancels a pending operation
 without discarding the draft. Failures leave the menu open. If a save reaches disk
@@ -203,8 +207,7 @@ Ctrl+S retries application. Cooperating writers use a `.settings-lock` file.
 An interrupted writer can leave a lock that requires review; locks are not
 automatically deleted. External editors do not participate in that lock.
 Session overrides retain their original conflict checks across menu reopenings.
-If the same field or save scope changes externally, review the files and reload
-the extension before editing again. Reloading discards session-only overrides.
+Conflicting external edits remain protected after reload or restart.
 
 The menu requires TUI mode. File configuration also works in print and RPC
 modes. `/compact <instructions>` supplies additional summary guidance.
