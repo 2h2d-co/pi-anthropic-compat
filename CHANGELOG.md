@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Separate menu sections with blank rows, using compact spacing on short terminals.
 - Align setting names on the left and values in a stable column on the right.
   Render the search placeholder in muted gray instead of ordinary input text.
   Keep Save and Discard hints visible in narrow terminals.
