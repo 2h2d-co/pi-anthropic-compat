@@ -14,6 +14,10 @@
 - Resolve the effective prompt-patcher rules the way the patcher does (model file over provider file; relative, absolute, and `~/` references), copy them into the isolated agent directory, and point isolated settings at the copy. Adjust matching package paths only in those temporary targets. Preserve replacement text and global configuration.
 - Read prompt and tool declarations from transcript system messages, never from `getSystemPrompt()` or tool lists. Serialize retained tails behind the prompt snapshot Pi records on compaction entries.
 - Background compaction remains out of scope.
+- Keep `/anthropic-settings` aligned with `/codex-settings`: Enter edits drafts,
+  Ctrl+S saves and applies them, and Escape discards unsaved drafts. Preserve
+  changed-field persistence, inheritance, conflict detection, and the shared
+  interaction tests in `test/settings-menu.test.ts`.
 - Preserve unrelated concurrent filesystem changes. Ask only when they directly conflict with scoped work.
 - Run complete non-writing validation through `mise run check`.
 - Run `npm run check` and `npm test` before committing meaningful code changes.

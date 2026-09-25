@@ -1,84 +1,62 @@
+import { join } from "node:path";
 import {
-  getSettingsListTheme,
-  type ExtensionContext,
-  type KeybindingsManager,
-  type Theme,
+  CONFIG_DIR_NAME,
+  getAgentDir,
+  type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import {
-  Key,
-  matchesKey,
-  SettingsList,
-  Text,
-  type Component,
-  type SettingItem,
-  type TUI,
-} from "@earendil-works/pi-tui";
-import { loadConfig, parseConfig, saveConfig, type Config } from "./config.ts";
+  settingsMenu,
+  waitForSettingsIdle,
+  type SettingsField,
+  type SettingsMenuFactory,
+} from "../settings-menu.ts";
+import { SettingsStore } from "../settings-store.ts";
+import { parseConfig, type Config } from "./config.ts";
+import { eligibleModel } from "./protocol.ts";
+import { object } from "./json.ts";
 
-export function settingItems(config: Config): SettingItem[] {
-  return [
-    {
-      id: "enabled",
-      label: "Native compaction",
-      description:
-        "Use signed Anthropic summaries for /compact and Pi auto-compaction. Existing summaries still replay when off.",
-      currentValue: config.enabled ? "on" : "off",
-      values: ["off", "on"],
-    },
-    {
-      id: "keepRecentTokens",
-      label: "Native tail tokens",
-      description:
-        "Keep approximately this many recent tokens unchanged. Zero summarizes all history. Safe boundaries can retain more.",
-      currentValue: String(config.keepRecentTokens),
-      values: ["0", "4096", "8192", "16000", "32000"],
-    },
-    {
-      id: "maxSummaryTokens",
-      label: "Summary output budget",
-      description: "Maximum output tokens for the separate summary request.",
-      currentValue: String(config.maxSummaryTokens),
-      values: ["2048", "4096", "8192", "16384"],
-    },
-    {
-      id: "timeoutSeconds",
-      label: "Compaction timeout",
-      description: "Seconds allowed for capability discovery and summary generation.",
-      currentValue: String(config.timeoutSeconds),
-      values: ["60", "120", "300", "600"],
-    },
-  ];
-}
-
-export function settingPatch(id: string, value: string, current: Config): Config {
-  if (id === "enabled" && (value === "on" || value === "off")) {
-    return { ...current, enabled: value === "on" };
-  }
-  if (id === "keepRecentTokens" || id === "maxSummaryTokens" || id === "timeoutSeconds") {
-    return parseConfig({ [id]: Number(value) }, current);
-  }
-  throw new Error("Unknown Anthropic setting.");
-}
-
-export type SettingsState = {
-  get: (ctx: Pick<ExtensionContext, "cwd" | "isProjectTrusted">) => Config;
-  set: (config: Config) => void;
-};
-
-export type SettingsFactory<T> = (
-  tui: Pick<TUI, "requestRender">,
-  theme: Pick<Theme, "fg" | "bold">,
-  keybindings: Pick<KeybindingsManager, "matches">,
-  done: (value: T) => void,
-) => Component;
-
-export type SettingsContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted" | "mode"> & {
+export const settingFields: SettingsField[] = [
+  {
+    id: "enabled",
+    label: "Native compaction",
+    choices: [false, true],
+    description: "Off: Pi creates new summaries. Existing signed summaries still replay.",
+  },
+  {
+    id: "keepRecentTokens",
+    label: "Native tail tokens",
+    choices: [0, 4096, 8192, 16000, 32000],
+    description:
+      "Retain recent messages unchanged. Zero summarizes all history; safe boundaries can retain more.",
+    number: { min: 0, max: 200000, integer: true, unit: "tokens" },
+  },
+  {
+    id: "maxSummaryTokens",
+    label: "Summary output budget",
+    choices: [2048, 4096, 8192, 16384],
+    description:
+      "Maximum summary output including internal thinking. Summary generation is billed separately.",
+    number: { min: 1024, max: 32768, integer: true, unit: "tokens" },
+  },
+  {
+    id: "timeoutSeconds",
+    label: "Compaction timeout",
+    choices: [60, 120, 300, 600],
+    description: "Time allowed for capability discovery and summary generation.",
+    number: { min: 10, max: 600, integer: true, unit: "seconds" },
+  },
+];
+export type SettingsState = { set: (config: Config) => void };
+export type SettingsContext = Pick<
+  ExtensionCommandContext,
+  "cwd" | "isProjectTrusted" | "mode" | "model" | "isIdle" | "waitForIdle"
+> & {
+  sessionManager: Pick<ExtensionCommandContext["sessionManager"], "getSessionId">;
   ui: {
-    custom: <T>(factory: SettingsFactory<T>) => Promise<T>;
-    notify: ExtensionContext["ui"]["notify"];
+    custom: <T>(factory: SettingsMenuFactory<T>) => Promise<T>;
+    notify: ExtensionCommandContext["ui"]["notify"];
   };
 };
-
 export type SettingsHandler = (args: string, ctx: SettingsContext) => Promise<void>;
 
 export function registerSettings(
@@ -97,91 +75,52 @@ export function registerSettings(
         ctx.ui.notify("/anthropic-settings requires TUI mode.", "error");
         return;
       }
-      let config = state.get(ctx);
-      let saved = { ...config };
-      let target = loadConfig(ctx.cwd, ctx.isProjectTrusted()).target;
-      await ctx.ui.custom<undefined>((tui, theme, keybindings, done) => {
-        let busy = false;
-        let notice = `Session changes apply immediately. Ctrl+S saves to ${target.file}.`;
-        const list = new SettingsList(
-          settingItems(config),
-          8,
-          getSettingsListTheme(),
-          (id, value) => {
-            config = settingPatch(id, value, config);
-            state.set(config);
-            notice = "Unsaved session changes.";
-          },
-          () => {
-            state.set(saved);
-            done(undefined);
-          },
-          { enableSearch: true },
+      const session = ctx.sessionManager.getSessionId();
+      const selectedModel = ctx.model;
+      const trusted = ctx.isProjectTrusted();
+      const store = new SettingsStore(
+        join(getAgentDir(), "pi-anthropic-compat.json"),
+        trusted ? join(ctx.cwd, CONFIG_DIR_NAME, "pi-anthropic-compat.json") : undefined,
+        (global, project) => ({ ...parseConfig(object(project), parseConfig(object(global))) }),
+      );
+      try {
+        await ctx.ui.custom(
+          settingsMenu({
+            title: "Anthropic Settings",
+            store,
+            snapshot: await store.load(),
+            fields: settingFields,
+            status: (values) =>
+              !values["enabled"]
+                ? "Native compaction off: Pi creates new summaries."
+                : eligibleModel(ctx.model)
+                  ? "Native compaction on. Live API capability is checked when compacting."
+                  : "Native compaction configured on; inactive for this model or endpoint.",
+            prepare: (signal) => waitForSettingsIdle(() => ctx.waitForIdle(), signal),
+            guard: () => {
+              if (
+                ctx.model?.id !== selectedModel?.id ||
+                ctx.model?.provider !== selectedModel?.provider
+              ) {
+                throw new Error("The selected model changed. Reopen settings.");
+              }
+              if (
+                session !== ctx.sessionManager.getSessionId() ||
+                trusted !== ctx.isProjectTrusted()
+              ) {
+                throw new Error("The session or project trust changed. Reopen settings.");
+              }
+              if (!ctx.isIdle()) throw new Error("Pi is busy. Retry saving when idle.");
+            },
+            apply: (values) => state.set(parseConfig(values)),
+          }),
         );
-        const save = async (close: boolean) => {
-          busy = true;
-          notice = "Saving…";
-          tui.requestRender();
-          try {
-            target = await saveConfig(target, config);
-            saved = { ...config };
-            notice = `Saved to ${target.file}.`;
-            if (close) done(undefined);
-          } catch (error) {
-            notice = error instanceof Error ? error.message : "Could not save settings.";
-            ctx.ui.notify(notice, "error");
-          } finally {
-            busy = false;
-            tui.requestRender();
-          }
-        };
-        const saveFailed = (error: unknown): void => {
-          busy = false;
-          ctx.ui.notify(
-            error instanceof Error ? error.message : "Could not finish saving settings.",
-            "error",
-          );
-        };
-        const component: Component = {
-          render: (width) => [
-            ...new Text(
-              theme.fg("accent", theme.bold("Anthropic Settings (pi-anthropic-compat)")),
-              1,
-              1,
-            ).render(width),
-            ...new Text(theme.fg("dim", notice), 1, 0).render(width),
-            ...list.render(width),
-            ...new Text(
-              theme.fg(
-                "dim",
-                "↑↓ navigate · Type to filter · Space change · Ctrl+S save · Enter save and close · Esc discard",
-              ),
-              1,
-              1,
-            ).render(width),
-          ],
-          invalidate: () => list.invalidate(),
-          handleInput: (data) => {
-            if (busy) return;
-            if (matchesKey(data, Key.ctrl("s"))) {
-              save(false).catch(saveFailed);
-              return;
-            }
-            if (matchesKey(data, Key.enter)) {
-              save(true).catch(saveFailed);
-              return;
-            }
-            if (matchesKey(data, Key.escape) || keybindings.matches(data, "tui.select.cancel")) {
-              state.set(saved);
-              done(undefined);
-              return;
-            }
-            list.handleInput(data);
-            tui.requestRender();
-          },
-        };
-        return component;
-      });
+      } catch (error) {
+        ctx.ui.notify(
+          error instanceof Error ? error.message : "Could not open Anthropic settings.",
+          "error",
+        );
+      }
     },
   });
 }

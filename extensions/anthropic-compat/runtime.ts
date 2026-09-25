@@ -354,7 +354,6 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
   });
 
   registerSettings(pi, {
-    get: configuration,
     set: (next) => {
       config = next;
     },

@@ -1,101 +1,98 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getKeybindings, type Component } from "@earendil-works/pi-tui";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { visibleWidth, type Component } from "@earendil-works/pi-tui";
 import {
   registerSettings,
+  settingFields,
   type SettingsContext,
   type SettingsHandler,
 } from "../extensions/anthropic-compat/settings.ts";
 import { DEFAULT_CONFIG } from "../extensions/anthropic-compat/config.ts";
-import { object } from "../extensions/anthropic-compat/json.ts";
 
-test(
-  "settings menu applies drafts, saves with Ctrl+S, and discards later edits with Escape",
-  { timeout: 5000 },
-  async (t) => {
-    const root = await mkdtemp(join(tmpdir(), "anthropic-settings-"));
-    await mkdir(join(root, "agent"));
-    const original = process.env["PI_CODING_AGENT_DIR"];
-    process.env["PI_CODING_AGENT_DIR"] = join(root, "agent");
-    t.after(() => {
-      if (original === undefined) delete process.env["PI_CODING_AGENT_DIR"];
-      else process.env["PI_CODING_AGENT_DIR"] = original;
-    });
-    initTheme("dark", false);
-    let current = { ...DEFAULT_CONFIG };
-    let handler: SettingsHandler | undefined;
-    let component: Component | undefined;
-    let onSaved: (() => void) | undefined;
-    const savedRendering = new Promise<undefined>((resolve) => {
-      onSaved = () => resolve(undefined);
-    });
-    const notices: string[] = [];
-    registerSettings(
-      {
-        registerCommand: (name, command) => {
-          assert.equal(name, "anthropic-settings");
-          handler = command.handler;
-        },
+test("Anthropic menu changes apply only after save and preserve provider defaults", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "anthropic-settings-"));
+  const previous = process.env["PI_CODING_AGENT_DIR"];
+  process.env["PI_CODING_AGENT_DIR"] = join(root, "agent");
+  await mkdir(join(root, "agent"));
+  t.after(async () => {
+    if (previous === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+    else process.env["PI_CODING_AGENT_DIR"] = previous;
+    await rm(root, { recursive: true, force: true });
+  });
+  initTheme("dark", false);
+  let current = { ...DEFAULT_CONFIG };
+  let handler: SettingsHandler | undefined;
+  let component: Component | undefined;
+  let saved: () => void = () => {};
+  const applied = new Promise<void>((resolve) => {
+    saved = resolve;
+  });
+  registerSettings(
+    {
+      registerCommand: (_name, command) => {
+        handler = command.handler;
       },
-      {
-        get: () => current,
-        set: (next) => {
-          current = next;
-        },
+    },
+    {
+      set: (next) => {
+        current = next;
+        saved();
       },
-    );
-    const ctx: SettingsContext = {
-      cwd: root,
-      isProjectTrusted: () => false,
-      mode: "tui",
-      ui: {
-        notify: (message) => {
-          notices.push(message);
-        },
-        custom: (factory) =>
-          new Promise((resolve) => {
-            component = factory(
-              {
-                requestRender: () => {
-                  if (component?.render(120).some((line) => line.includes("Saved to"))) onSaved?.();
-                },
+    },
+  );
+  let opened: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    opened = resolve;
+  });
+  const ctx: SettingsContext = {
+    cwd: root,
+    mode: "tui",
+    model: undefined,
+    isProjectTrusted: () => false,
+    isIdle: () => true,
+    waitForIdle: async () => {},
+    sessionManager: { getSessionId: () => "synthetic" },
+    ui: {
+      notify: (message) => assert.fail(message),
+      custom: (factory) =>
+        new Promise((resolve) => {
+          component = factory(
+            {
+              requestRender: () => {
+                component?.render(120);
               },
-              { fg: (_color, text) => text, bold: (text) => text },
-              { matches: () => false },
-              resolve,
-            );
-          }),
-      },
-    };
-    assert.ok(handler);
-    const pending = handler("", ctx);
-    assert.ok(component);
-    assert.equal(typeof component.handleInput, "function");
-    component.handleInput?.(" ");
-    assert.equal(current.enabled, true);
-    component.handleInput?.("\u001b[B");
-    component.handleInput?.(" ");
-    assert.equal(current.keepRecentTokens, 4096);
-    component.handleInput?.("\u001b[A");
-    for (const width of [40, 80, 120]) {
-      assert.ok(component.render(width).every((line) => visibleWidth(line) <= width));
-    }
-    component.handleInput?.("\u0013");
-    await savedRendering;
-    const saved = object(
-      JSON.parse(await readFile(join(root, "agent", "pi-anthropic-compat.json"), "utf8")),
-    );
-    assert.equal(saved["enabled"], true);
-    assert.equal(saved["keepRecentTokens"], 4096);
-    component.handleInput?.(" ");
-    assert.equal(current.enabled, false);
-    component.handleInput?.("\u001b");
-    await pending;
-    assert.equal(current.enabled, true);
-    assert.deepEqual(notices, []);
-  },
-);
+            },
+            { fg: (_color, text) => text, bold: (text) => text },
+            getKeybindings(),
+            resolve,
+          );
+          component.render(120);
+          opened();
+        }),
+    },
+  };
+  assert.ok(handler);
+  const pending = handler("", ctx);
+  await ready;
+  assert.ok(component);
+  component.handleInput?.("Native compaction");
+  component.handleInput?.("\r");
+  assert.equal(current.enabled, false);
+  component.handleInput?.("\u0013");
+  await applied;
+  assert.equal(current.enabled, true);
+  const data: unknown = JSON.parse(
+    await readFile(join(root, "agent", "pi-anthropic-compat.json"), "utf8"),
+  );
+  assert.deepEqual(data, { enabled: true });
+  component.handleInput?.("\r");
+  component.handleInput?.("\u001b");
+  await pending;
+  assert.equal(current.enabled, true);
+  assert.equal(settingFields.length, 4);
+  assert.equal(settingFields.find((field) => field.id === "maxSummaryTokens")?.number?.max, 32768);
+});

@@ -9,4 +9,6 @@ extensions/anthropic-compat/runtime.ts
 extensions/anthropic-compat/settings.ts
 extensions/anthropic-compat/tail.ts
 extensions/index.ts
+extensions/settings-menu.ts
+extensions/settings-store.ts
 package.json
