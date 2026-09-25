@@ -13,7 +13,7 @@ import {
 } from "../extensions/anthropic-compat/settings.ts";
 import { DEFAULT_CONFIG } from "../extensions/anthropic-compat/config.ts";
 
-test("Anthropic menu changes apply only after save and preserve provider defaults", async (t) => {
+test("Anthropic session settings reopen live and reset on session start", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "anthropic-settings-"));
   const previous = process.env["PI_CODING_AGENT_DIR"];
   process.env["PI_CODING_AGENT_DIR"] = join(root, "agent");
@@ -27,17 +27,22 @@ test("Anthropic menu changes apply only after save and preserve provider default
   let current = { ...DEFAULT_CONFIG };
   let handler: SettingsHandler | undefined;
   let component: Component | undefined;
+  let startSession: () => void = () => {};
   let saved: () => void = () => {};
   const applied = new Promise<void>((resolve) => {
     saved = resolve;
   });
   registerSettings(
     {
+      on: (_event, listener) => {
+        startSession = listener;
+      },
       registerCommand: (_name, command) => {
         handler = command.handler;
       },
     },
     {
+      get: () => current,
       set: (next) => {
         current = next;
         saved();
@@ -82,16 +87,46 @@ test("Anthropic menu changes apply only after save and preserve provider default
   component.handleInput?.("Native compaction");
   component.handleInput?.("\r");
   assert.equal(current.enabled, false);
-  component.handleInput?.("\u0013");
+  component.handleInput?.("\t");
+  component.handleInput?.("\t");
+  component.handleInput?.("\r");
   await applied;
   assert.equal(current.enabled, true);
+  const file = join(root, "agent", "pi-anthropic-compat.json");
+  await assert.rejects(readFile(file), { code: "ENOENT" });
+  component.handleInput?.("\u001b");
+  await pending;
+  const reopened = new Promise<void>((resolve) => {
+    opened = resolve;
+  });
+  const pendingReopen = handler("", ctx);
+  await reopened;
+  assert.match(component.render(120).join("\n"), /Native compaction\s+on ~/);
+  component.handleInput?.("\u001b");
+  await pendingReopen;
+  current = { ...DEFAULT_CONFIG };
+  startSession();
+  const restarted = new Promise<void>((resolve) => {
+    opened = resolve;
+  });
+  const pendingRestart = handler("", ctx);
+  await restarted;
+  assert.match(component.render(120).join("\n"), /Native compaction\s+off/);
+  component.handleInput?.("\u0013");
+  await assert.rejects(readFile(file), { code: "ENOENT" });
+  component.handleInput?.("\r");
+  const persisted = new Promise<void>((resolve) => {
+    saved = resolve;
+  });
+  component.handleInput?.("\u0013");
+  await persisted;
   const data: unknown = JSON.parse(
     await readFile(join(root, "agent", "pi-anthropic-compat.json"), "utf8"),
   );
   assert.deepEqual(data, { enabled: true });
   component.handleInput?.("\r");
   component.handleInput?.("\u001b");
-  await pending;
+  await pendingRestart;
   assert.equal(current.enabled, true);
   assert.equal(settingFields.length, 4);
   assert.equal(settingFields.find((field) => field.id === "maxSummaryTokens")?.number?.max, 32768);

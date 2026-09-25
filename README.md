@@ -147,10 +147,12 @@ Treat session files as private conversation data.
 - **Space** activates a result or inserts a space when search has focus.
 - **Tab / Shift+Tab** move between search, results, and action controls.
 - **F1** opens scrollable details, full errors, and the exact save target.
-- Edits remain drafts. They do not change the running session until saved.
+- Edits remain drafts until explicitly applied or saved.
+- **Apply to session** applies drafts without writing configuration files and stays open.
 - **Ctrl+S** saves and applies changes without closing.
 - **Save and close** saves and applies changes, then closes on success.
-- **Escape** cancels a field editor or discards unsaved drafts and closes the main menu.
+- **Escape** cancels a field editor or discards unapplied drafts and closes the main menu.
+  It does not undo settings already applied to the session.
 
 Search matches labels, configuration keys, and descriptions. Numeric editors
 offer presets and custom values across the complete supported range.
@@ -184,16 +186,25 @@ error instead of silently enabling native compaction.
 
 Saving changes only edited overrides and preserves unknown keys and inherited
 values. The save target stays fixed while the menu is open. Non-conflicting
-external edits are preserved; conflicting edits require reopening the menu.
+external edits are preserved; conflicting edits are rejected for review.
 Opening or closing without changes does not create a configuration file.
-The menu reads current file-backed values when opened.
+Reopening shows active session values, not freshly read file values. `*` marks
+an unapplied draft. `~` marks an active session override or a value that differs
+from the saved configuration. Details shows the saved value when it differs.
+Ctrl+S also persists changes previously applied only to the session.
+Session-only changes survive closing the menu and navigating the session tree.
+They reset when starting or switching sessions, reloading extensions, or restarting
+Pi. They are not stored in the session transcript.
 
-Saves wait for Pi to become idle. Escape cancels a pending save without
-discarding the draft. Save failures leave the menu open. If a save reaches disk
+Applying and saving wait for Pi to become idle. Escape cancels a pending operation
+without discarding the draft. Failures leave the menu open. If a save reaches disk
 but cannot be applied to the session, the menu reports that distinction and
 Ctrl+S retries application. Cooperating writers use a `.settings-lock` file.
 An interrupted writer can leave a lock that requires review; locks are not
 automatically deleted. External editors do not participate in that lock.
+Session overrides retain their original conflict checks across menu reopenings.
+If the same field or save scope changes externally, review the files and reload
+the extension before editing again. Reloading discards session-only overrides.
 
 The menu requires TUI mode. File configuration also works in print and RPC
 modes. `/compact <instructions>` supplies additional summary guidance.

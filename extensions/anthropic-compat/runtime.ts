@@ -140,8 +140,9 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
   });
   pi.on("session_shutdown", reset);
   pi.on("session_tree", (_event, ctx) => {
-    reset();
     context = ctx;
+    transform = undefined;
+    transformModel = undefined;
   });
   pi.on("model_select", (_event, ctx) => {
     context = ctx;
@@ -354,6 +355,7 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
   });
 
   registerSettings(pi, {
+    get: configuration,
     set: (next) => {
       config = next;
     },

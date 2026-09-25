@@ -15,7 +15,9 @@
 - Read prompt and tool declarations from transcript system messages, never from `getSystemPrompt()` or tool lists. Serialize retained tails behind the prompt snapshot Pi records on compaction entries.
 - Background compaction remains out of scope.
 - Keep `/anthropic-settings` aligned with `/codex-settings`: Enter edits drafts,
-  Ctrl+S saves and applies them, and Escape discards unsaved drafts. Preserve
+  Apply to session changes the active session without file writes, Ctrl+S saves
+  and applies, and Escape discards only unapplied drafts. Reopening must show
+  active session values, not file values. Preserve
   changed-field persistence, inheritance, conflict detection, and the shared
   interaction tests in `test/settings-menu.test.ts`.
 - Preserve unrelated concurrent filesystem changes. Ask only when they directly conflict with scoped work.

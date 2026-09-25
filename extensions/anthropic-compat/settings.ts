@@ -10,7 +10,7 @@ import {
   type SettingsField,
   type SettingsMenuFactory,
 } from "../settings-menu.ts";
-import { SettingsStore } from "../settings-store.ts";
+import { SettingsStore, type SettingsSessionState } from "../settings-store.ts";
 import { parseConfig, type Config } from "./config.ts";
 import { eligibleModel } from "./protocol.ts";
 import { object } from "./json.ts";
@@ -46,7 +46,10 @@ export const settingFields: SettingsField[] = [
     number: { min: 10, max: 600, integer: true, unit: "seconds" },
   },
 ];
-export type SettingsState = { set: (config: Config) => void };
+export type SettingsState = {
+  get: (ctx: Pick<SettingsContext, "cwd" | "isProjectTrusted">) => Config;
+  set: (config: Config) => void;
+};
 export type SettingsContext = Pick<
   ExtensionCommandContext,
   "cwd" | "isProjectTrusted" | "mode" | "model" | "isIdle" | "waitForIdle"
@@ -61,6 +64,7 @@ export type SettingsHandler = (args: string, ctx: SettingsContext) => Promise<vo
 
 export function registerSettings(
   pi: {
+    on: (event: "session_start", handler: () => void) => void;
     registerCommand: (
       name: string,
       options: { description: string; handler: SettingsHandler },
@@ -68,6 +72,10 @@ export function registerSettings(
   },
   state: SettingsState,
 ): void {
+  let sessionState: SettingsSessionState = { changes: {} };
+  pi.on("session_start", () => {
+    sessionState = { changes: {} };
+  });
   pi.registerCommand("anthropic-settings", {
     description: "Configure native Anthropic compatibility",
     handler: async (_args, ctx) => {
@@ -89,6 +97,8 @@ export function registerSettings(
             title: "Anthropic Settings",
             store,
             snapshot: await store.load(),
+            current: { ...state.get(ctx) },
+            session: sessionState,
             fields: settingFields,
             status: (values) =>
               !values["enabled"]
@@ -110,7 +120,7 @@ export function registerSettings(
               ) {
                 throw new Error("The session or project trust changed. Reopen settings.");
               }
-              if (!ctx.isIdle()) throw new Error("Pi is busy. Retry saving when idle.");
+              if (!ctx.isIdle()) throw new Error("Pi is busy. Retry when idle.");
             },
             apply: (values) => state.set(parseConfig(values)),
           }),

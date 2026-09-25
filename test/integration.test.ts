@@ -153,6 +153,7 @@ async function setup(
   const session = await create();
   return {
     session,
+    configFile: join(agentDir, "pi-anthropic-compat.json"),
     manager,
     requests,
     create,
@@ -167,6 +168,21 @@ async function setup(
     },
   };
 }
+
+test("tree navigation retains active session configuration instead of reloading files", async (t) => {
+  const { session, manager, requests, configFile } = await setup(t);
+  await session.prompt("Remember the synthetic project Lantern.");
+  const user = manager
+    .getBranch()
+    .find((entry) => entry.type === "message" && entry.message.role === "user");
+  assert.ok(user);
+  await writeFile(configFile, JSON.stringify({ enabled: false }));
+  await session.navigateTree(user.id);
+  await session.prompt("Continue on this branch.");
+  const result = await session.compact();
+  assert.equal(result.summary, block["content"]);
+  assert.ok(requests.some((request) => request["compaction"]));
+});
 
 test("real Pi session compacts, replays exactly one native block, and retains original history", async (t) => {
   const { session, manager, requests } = await setup(t);

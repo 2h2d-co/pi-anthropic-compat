@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Apply to session without changing configuration files. Reopening settings shows
+  active session values. Ctrl+S can save session-only changes later.
 - Numeric editors with presets and custom values, configuration-source labels,
   inherited-value resets, and keyboard, focus, and mouse support.
 
