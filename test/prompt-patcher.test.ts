@@ -70,6 +70,25 @@ test("retargets package paths without changing replacement text or source rules"
   assert.equal(JSON.stringify(rules), original);
 });
 
+test("composes rules that rewrite the package directory in pieces", () => {
+  const root = resolve("synthetic/installs/pi");
+  const from = `${root}/0.99.1/lib/node_modules/@earendil-works/pi-coding-agent`;
+  const to = resolve("synthetic/repository/node_modules/@earendil-works/pi-coding-agent");
+  const rules = [
+    { target: "You are pi.", replacement: "You are an agent." },
+    { target: `${root}/`, replacement: "/renamed/installs/" },
+    { target: "/lib/node_modules/@earendil-works/pi-coding-agent/", replacement: "/lib/agent/" },
+    { target: "~/.pi/agent/", replacement: "~/.agent/" },
+  ];
+  assert.deepEqual(retargetPackageDirectory(rules, from, to), [
+    { target: "You are pi.", replacement: "You are an agent." },
+    { target: `${to}/`, replacement: "/renamed/installs/0.99.1/lib/agent/" },
+    { target: "~/.pi/agent/", replacement: "~/.agent/" },
+  ]);
+  // The runtime the rules describe keeps them unchanged.
+  assert.deepEqual(retargetPackageDirectory(rules, from, from), rules);
+});
+
 test("keeps rules unchanged when package directories already match", () => {
   const root = resolve("synthetic/pi");
   const rules = [{ target: `${root}/docs`, replacement: "Documentation" }];

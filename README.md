@@ -283,13 +283,17 @@ for the model under test wins over the provider file, and relative, absolute,
 and `~/` references are all accepted. They copy those rules into the isolated
 agent directory, rewrite package-directory references in the match targets for
 the runtime under test, and write isolated patcher settings that point at the
-copy. Replacement text and global configuration remain unchanged. The Mise task
-records the parent's `PI_PACKAGE_DIR` in `PI_ANTHROPIC_PARENT_PACKAGE_DIR`
-before binding the repository Pi, because global rules describe that parent
-runtime. The tests verify the recorded directory is a Pi package. If the rules
-describe another installation, set `PI_ANTHROPIC_PARENT_PACKAGE_DIR` to that
-package directory explicitly. When neither variable supplies a source directory,
-targets remain unchanged and the patcher reports any mismatch.
+copy. Rules that rewrite the package directory in pieces, such as its
+installation root and the package path around a version segment, become one rule
+for the runtime under test with the same result. Replacement text and global
+configuration remain unchanged. The Mise task records the parent's
+`PI_PACKAGE_DIR` in `PI_ANTHROPIC_PARENT_PACKAGE_DIR` before binding the
+repository Pi, because global rules describe that parent runtime. When the
+parent sets no `PI_PACKAGE_DIR`, the task records the Mise-installed Pi. The
+tests verify the recorded directory is a Pi package. If the rules describe
+another installation, set `PI_ANTHROPIC_PARENT_PACKAGE_DIR` to that package
+directory explicitly. An empty value leaves targets unchanged, and the patcher
+reports any mismatch.
 
 `mise run test:live` is the complete release validation. It runs the SDK and CLI
 tests against the Pi 0.99.1 development dependency, then repeats the Fable CLI

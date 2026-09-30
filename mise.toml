@@ -36,10 +36,10 @@ run = '''
 set -eu
 installed_pi="$(mise where pi)/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
 test -f "$installed_pi"
-# Global prompt-patcher rules describe the parent's Pi package directory. Record it for the
-# tests, then bind the in-process runtime to the repository dependency. Each CLI child binds
-# PI_PACKAGE_DIR to its own executable's package.
-export PI_ANTHROPIC_PARENT_PACKAGE_DIR="${PI_ANTHROPIC_PARENT_PACKAGE_DIR-${PI_PACKAGE_DIR:-}}"
+# Global prompt-patcher rules describe the parent's Pi package directory, or the Mise-installed
+# Pi when the parent sets none. Record it for the tests, then bind the in-process runtime to the
+# repository dependency. Each CLI child binds PI_PACKAGE_DIR to its own executable's package.
+export PI_ANTHROPIC_PARENT_PACKAGE_DIR="${PI_ANTHROPIC_PARENT_PACKAGE_DIR-${PI_PACKAGE_DIR:-$(dirname "$(dirname "$(dirname "$installed_pi")")")}}"
 export PI_PACKAGE_DIR="$PWD/node_modules/@earendil-works/pi-coding-agent"
 node --test test/settings-cli.test.ts
 PI_ANTHROPIC_CLI_PATH="$PWD/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \

@@ -13,16 +13,33 @@ export const ISOLATED_REPLACEMENT_FILE = "pi-system-prompt-patcher-replacements.
 export const PARENT_PACKAGE_DIR_VARIABLE = "PI_ANTHROPIC_PARENT_PACKAGE_DIR";
 
 // Change only package-directory references in match targets, never replacement text.
+// Rules can also rewrite the package directory in pieces, such as its installation root and
+// the package path around a version segment. Another runtime's directory contains none of
+// those pieces, so they become one rule that rewrites that directory to the same result.
 export function retargetPackageDirectory(value: unknown, from: string, to: string) {
   assert.ok(Array.isArray(value), "Prompt-patcher replacements must be an array.");
   const source = `${resolve(from)}/`;
   const destination = `${resolve(to)}/`;
-  return value.map((item: unknown) => {
+  const rules = value.map((item: unknown) => {
     const rule = object(item);
     const target = rule["target"];
+    const replacement = rule["replacement"];
     assert.ok(typeof target === "string" && target.length > 0, "A match target is required.");
-    assert.ok(typeof rule["replacement"] === "string", "Replacement text is required.");
-    return { ...rule, target: target.replaceAll(source, destination) };
+    assert.ok(typeof replacement === "string", "Replacement text is required.");
+    return { rule, target, replacement };
+  });
+  if (source === destination) return rules.map(({ rule }) => ({ ...rule }));
+  const isPiece = (target: string) => !target.includes(source) && source.includes(target);
+  let rewritten = source;
+  for (const { target, replacement } of rules) {
+    if (isPiece(target)) rewritten = rewritten.replaceAll(target, replacement);
+  }
+  let composed = false;
+  return rules.flatMap(({ rule, target }) => {
+    if (!isPiece(target)) return [{ ...rule, target: target.replaceAll(source, destination) }];
+    if (composed) return [];
+    composed = true;
+    return [{ ...rule, target: destination, replacement: rewritten }];
   });
 }
 
