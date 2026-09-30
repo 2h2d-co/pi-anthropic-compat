@@ -3,7 +3,8 @@
 Native Anthropic compatibility for Pi, starting with signed on-demand compaction.
 
 Requires **Pi 0.87.0 or newer** and Node.js 22.19 or newer. Releases are
-validated against Pi 0.87.1. Opus 5.5 requires Pi 0.87.1's model catalog.
+validated against Pi 0.99.1. Opus 5.5 requires Pi 0.87.1's model catalog, and
+Sonnet 5.5 requires Pi 0.99.1's.
 
 ## Install
 
@@ -100,7 +101,7 @@ summaries still replay until another Pi compaction replaces them.
 
 This version supports the direct Claude API and these documented model IDs:
 
-- `claude-sonnet-5`, `claude-sonnet-4-6`
+- `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-sonnet-4-6`
 - `claude-opus-5-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`
 - `claude-fable-5-1`, `claude-fable-5`
 - `claude-mythos-5-1`, `claude-mythos-5`, `claude-mythos-preview`
@@ -238,7 +239,7 @@ effort instructions, changed system/tools/content, and cold session resume.
 in-process tests read that runtime's metadata rather than an inherited global
 override. Only Mise tasks set this binding; ordinary `pi` launches are unaffected.
 
-Live tests make billed Fable 5.1 and Opus 5.5 requests at `low` effort:
+Live tests make billed Fable 5.1, Opus 5.5, and Sonnet 5.5 requests at `low` effort:
 
 ```sh
 mise run test:live
@@ -265,8 +266,8 @@ Fact recall after compaction proves the signed block replayed, because the
 extension withholds Pi's summary message once a checkpoint exists. The test
 requires Pi 0.87 or newer. `PI_ANTHROPIC_CLI_PATH` selects the `cli.js` under
 test; the Mise task sets it for each run.
-Fable tests retain recent messages. Opus 5.5 tests cover both full-history and
-retained-message compaction. The default test suite and CI skip live tests.
+Fable tests retain recent messages. Opus 5.5 and Sonnet 5.5 tests cover both
+full-history and retained-message compaction. The default test suite and CI skip live tests.
 
 Each CLI subprocess sets `PI_PACKAGE_DIR` to the selected executable's package
 directory, and the SDK tests use the repository Pi. Both test suites resolve the
@@ -284,10 +285,10 @@ package directory explicitly. When neither variable supplies a source directory,
 targets remain unchanged and the patcher reports any mismatch.
 
 `mise run test:live` is the complete release validation. It runs the SDK and CLI
-tests against the Pi 0.87.1 development dependency, then repeats the Fable CLI
+tests against the Pi 0.99.1 development dependency, then repeats the Fable CLI
 test against Mise-installed Pi. The installed-runtime check requires Pi 0.87 or
-newer and uses Fable for baseline coverage. Opus 5.5 coverage always uses the
-repository's Pi 0.87.1 catalog. Live test files run sequentially to limit
+newer and uses Fable for baseline coverage. Opus 5.5 and Sonnet 5.5 coverage
+always uses the repository's Pi 0.99.1 catalog. Live test files run sequentially to limit
 concurrent requests against the same account.
 Set `PI_PACKAGE_ARCHIVE` to test a prepared archive instead of packing the
 working directory. A relative path resolves from the current working

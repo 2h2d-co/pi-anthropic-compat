@@ -19,6 +19,8 @@ test("only documented direct Anthropic models are eligible", () => {
   assert.equal(eligibleModel(model), true);
   assert.equal(eligibleModel({ ...model, id: "claude-opus-5-5" }), true);
   assert.equal(eligibleModel({ ...model, id: "claude-opus-5-5-preview" }), false);
+  assert.equal(eligibleModel({ ...model, id: "claude-sonnet-5-5" }), true);
+  assert.equal(eligibleModel({ ...model, id: "claude-sonnet-5-5-preview" }), false);
   assert.equal(
     eligibleModel({ ...model, id: "claude-opus-5-5", baseUrl: "https://proxy.invalid" }),
     false,

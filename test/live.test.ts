@@ -22,7 +22,7 @@ import { isolatePromptPatcher, parentPackageDirectory } from "./prompt-patcher.t
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-for (const modelId of ["claude-fable-5-1", "claude-opus-5-5"]) {
+for (const modelId of ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"]) {
   test(
     `live ${modelId} low-effort retained thinking with enforced positive and negative controls`,
     {

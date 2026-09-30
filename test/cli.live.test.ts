@@ -6,9 +6,10 @@ import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { RpcClient } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-client.js";
+type RpcClientModule =
+  typeof import("../node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-client.js");
 import { object } from "../extensions/anthropic-compat/json.ts";
 import { CHECKPOINT_TYPE } from "../extensions/anthropic-compat/protocol.ts";
 import { REQUEST_TYPE } from "../extensions/anthropic-compat/tail.ts";
@@ -16,6 +17,24 @@ import { archiveEntries, packageArchive } from "./package-archive.ts";
 import { isolatePromptPatcher, parentPackageDirectory } from "./prompt-patcher.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+function isRpcClientModule(value: unknown): value is RpcClientModule {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "RpcClient" in value &&
+    typeof value.RpcClient === "function"
+  );
+}
+
+async function loadRpcClient(piRoot: string): Promise<RpcClientModule> {
+  const loaded: unknown = await import(
+    pathToFileURL(join(piRoot, "dist/modes/rpc/rpc-client.js")).href
+  );
+  assert.ok(isRpcClientModule(loaded), `Pi at ${piRoot} does not export RpcClient.`);
+  return loaded;
+}
+
 const FACTS =
   "project Lantern, language TypeScript, port 4317, storage SQLite, " +
   "constraint no network access, next task implement /health";
@@ -34,6 +53,8 @@ if (process.env["PI_ANTHROPIC_CLI_BASELINE_ONLY"] !== "1") {
   scenarios.push(
     { modelId: "claude-opus-5-5", keepRecentTokens: 0 },
     { modelId: "claude-opus-5-5", keepRecentTokens: 1 },
+    { modelId: "claude-sonnet-5-5", keepRecentTokens: 0 },
+    { modelId: "claude-sonnet-5-5", keepRecentTokens: 1 },
   );
 }
 for (const { modelId, keepRecentTokens } of scenarios) {
@@ -66,6 +87,9 @@ for (const { modelId, keepRecentTokens } of scenarios) {
       assert.ok(typeof piVersion === "string", "Pi manifest version is required.");
       const [major = 0, minor = 0] = piVersion.split(".").map(Number);
       assert.ok(major > 0 || minor >= 87, `Pi ${piVersion} predates the supported range.`);
+      // Drive each executable with its own RPC client: the protocol changes between Pi
+      // versions, and the Mise-installed baseline can predate the repository dependency.
+      const { RpcClient } = await loadRpcClient(piRoot);
 
       // Isolated agent state with the real Claude login and the required prompt patcher.
       const realAgentDir = getAgentDir();

@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Native on-demand compaction and retained-message replay for
+  `claude-sonnet-5-5`. Sonnet 5.5 requires Pi 0.99.1's model catalog.
+
+### Changed
+
+- Validate releases against Pi 0.99.1. Pi 0.87.0 and newer remain supported.
+
 ## [0.0.6] - 2026-09-25
 
 ### Fixed
