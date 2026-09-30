@@ -110,6 +110,14 @@ The live Models API must also report support. Haiku 4.5 does not support native
 on-demand compaction. Unsupported models, other providers, and proxies retain
 Pi's ordinary compaction behavior.
 
+Native compaction checks the selected model, not the model that answers a
+request. Pi's experimental virtual models, registered with
+`pi.registerVirtualModel()`, stay selected while Pi routes each request to a
+physical model. With a virtual model selected, `/compact` and automatic
+compaction use Pi's ordinary compaction. This holds even when the router sends
+every request to a supported Anthropic model. Select that model directly to use
+native compaction.
+
 When switching to an unsupported model or provider, Pi's readable summary
 remains available as ordinary context. Returning to a supported Anthropic
 model restores native replay if that checkpoint is still on the active branch.
