@@ -5,12 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createAgentSession,
+  createCodemodeExtension,
+  defineTool,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { InMemoryCredentialStore, Type } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import {
   registerCompatibility,
@@ -22,6 +24,23 @@ import { block, model, summaryResponse, textResponse } from "./fixtures.ts";
 import { SESSION_SETTINGS_TYPE } from "../extensions/anthropic-compat/settings.ts";
 import { DEFAULT_CONFIG } from "../extensions/anthropic-compat/config.ts";
 import { sessionSettingsEntry } from "../extensions/settings-session.ts";
+
+const execute = async () => ({ content: [{ type: "text" as const, text: "ok" }], details: {} });
+const reportTool = defineTool({
+  name: "report",
+  label: "Report",
+  description: "Report a value.",
+  parameters: Type.Object({ value: Type.String() }),
+  execute,
+});
+const handoffTool = defineTool({
+  name: "handoff",
+  label: "Handoff",
+  description: "Hand off the session.",
+  parameters: Type.Object({ goal: Type.String() }),
+  exposure: "model-only",
+  execute,
+});
 
 async function setup(
   t: TestContext,
@@ -35,6 +54,8 @@ async function setup(
     modelId?: "claude-opus-5-5";
     /** Replace the serialized system prompt at the payload boundary. Default: true. */
     patchSystem?: boolean;
+    /** Activate Pi codemode in this mode next to a direct and a model-only tool. */
+    codemode?: "on" | "only";
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "anthropic-integration-"));
@@ -109,6 +130,7 @@ async function setup(
         reserveTokens: 16384,
       },
       retry: { enabled: false, provider: { maxRetries: 0 } },
+      ...(options.codemode ? { codemode: { mode: options.codemode } } : {}),
     });
     const loader = new DefaultResourceLoader({
       cwd: root,
@@ -133,6 +155,7 @@ async function setup(
           pi.on("before_agent_start", (event) => {
             if (section !== undefined) event.systemPromptOptions.sections["fixture"] = section;
           }),
+        ...(options.codemode ? [createCodemodeExtension()] : []),
       ],
     });
     await loader.reload();
@@ -146,9 +169,12 @@ async function setup(
       sessionManager,
       settingsManager: settings,
       resourceLoader: loader,
-      noTools: "all",
+      ...(options.codemode
+        ? { noTools: "builtin" as const, customTools: [reportTool, handoffTool] }
+        : { noTools: "all" as const }),
     });
     await session.bindExtensions({});
+    if (options.codemode) session.setActiveToolsByName(["report", "handoff", "codemode"]);
     contextWindow = session.model?.contextWindow ?? model.contextWindow;
     t.after(() => session.dispose());
     return session;
@@ -600,3 +626,27 @@ test("forked sessions replay the exact retained thinking without modifying the o
   );
   assert.equal(await readFile(file, "utf8"), original);
 });
+
+for (const codemode of ["on", "only"] as const) {
+  for (const keepRecentTokens of [0, 1]) {
+    test(`native compaction declares the turn tools under codemode ${codemode} mode with keepRecentTokens=${keepRecentTokens}`, async (t) => {
+      const { session, requests } = await setup(t, { codemode, keepRecentTokens });
+      await session.prompt("Remember the synthetic project Lantern.");
+      await session.prompt("Remember the synthetic city Harbor.");
+      const turn = requests.at(-1);
+      assert.ok(turn);
+      const names = objects(turn["tools"]).map((tool) => tool["name"]);
+      assert.deepEqual(names.includes("report"), codemode === "on");
+      assert.ok(names.includes("codemode") && names.includes("handoff"));
+      await session.compact();
+      const summary = requests.at(-1);
+      assert.ok(summary?.["compaction"]);
+      assert.deepEqual(summary["tools"], turn["tools"]);
+      await session.prompt("Continue.");
+      const continued = requests.at(-1);
+      assert.ok(continued && !continued["compaction"]);
+      assert.deepEqual(continued["tools"], turn["tools"]);
+      assert.match(JSON.stringify(continued["messages"]), /test-opaque-content/);
+    });
+  }
+}

@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Declare the last turn's tools in native compaction under Pi codemode's `only`
+  mode. Summary requests rebuilt the tools from the transcript, which still
+  lists the tools codemode hides from turn requests. Full-history summaries
+  missed the prompt cache, and keep-tail compaction always cancelled.
 - Resume sessions whose saved `/anthropic-settings` values include a setting a later
   version removed or no longer accepts. Those fields are skipped instead of failing
   the whole record at session start.

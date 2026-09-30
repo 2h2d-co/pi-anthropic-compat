@@ -236,11 +236,15 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
         onPayload: async (payload, selected) => {
           const updated = await currentTransform?.(payload, selected);
           const result = object(updated === undefined ? payload : updated);
-          if (!currentTransform) {
-            for (const key of ["system", "tools", "thinking", "output_config"] as const) {
-              if (savedTemplate[key] === undefined) delete result[key];
-              else result[key] = savedTemplate[key];
-            }
+          // The branch still declares tools that Pi strips from turn requests
+          // after extensions see the transcript (codemode `only` mode), so
+          // only the saved template holds the tools the last turn sent.
+          const keys = currentTransform
+            ? (["tools"] as const)
+            : (["system", "tools", "thinking", "output_config"] as const);
+          for (const key of keys) {
+            if (savedTemplate[key] === undefined) delete result[key];
+            else result[key] = savedTemplate[key];
           }
           return configuration(ctx).keepRecentTokens > 0 ? enforceThinking(result) : result;
         },

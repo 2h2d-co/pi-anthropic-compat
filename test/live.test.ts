@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,13 +7,17 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createAgentSession,
+  createCodemodeExtension,
+  defineTool,
   DefaultResourceLoader,
   getAgentDir,
   getPackageDir,
   ModelRuntime,
   SessionManager,
   SettingsManager,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "@earendil-works/pi-ai";
 import extension from "../extensions/index.ts";
 import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
 import { activeCheckpoint } from "../extensions/anthropic-compat/runtime.ts";
@@ -21,6 +25,136 @@ import { messageHash } from "../extensions/anthropic-compat/tail.ts";
 import { isolatePromptPatcher, parentPackageDirectory } from "./prompt-patcher.ts";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+async function liveSession(
+  t: TestContext,
+  modelId: string,
+  options: { codemode?: "on" | "only"; customTools?: ToolDefinition[] } = {},
+) {
+  const root = await mkdtemp(join(tmpdir(), "anthropic-live-"));
+  const agentDir = join(root, "agent");
+  await mkdir(agentDir);
+  await mkdir(join(root, ".pi"));
+  await writeFile(
+    join(root, ".pi", "pi-anthropic-compat.json"),
+    JSON.stringify({ enabled: true, keepRecentTokens: 1 }),
+  );
+  // The in-process runtime must use the repository dependency's metadata, not an inherited
+  // global package directory. `mise run test:live` binds PI_PACKAGE_DIR accordingly.
+  const packageDir = getPackageDir();
+  assert.equal(
+    await realpath(packageDir),
+    await realpath(join(repository, "node_modules/@earendil-works/pi-coding-agent")),
+    "Run the live tests through `mise run test:live` so PI_PACKAGE_DIR selects the repository Pi.",
+  );
+  const realAgentDir = getAgentDir();
+  const patcher = join(
+    realAgentDir,
+    "npm",
+    "node_modules",
+    "pi-system-prompt-patcher",
+    "extensions",
+    "index.ts",
+  );
+  assert.ok(
+    existsSync(patcher),
+    "Install the system-prompt patcher before running a live Anthropic test.",
+  );
+  // The patcher reads its settings from PI_CODING_AGENT_DIR on every request. Give it an
+  // isolated copy of the effective global rules whose targets name this package directory.
+  await isolatePromptPatcher({
+    sourceAgentDir: realAgentDir,
+    agentDir,
+    provider: "anthropic",
+    model: modelId,
+    from: (await parentPackageDirectory()) ?? packageDir,
+    to: packageDir,
+  });
+  const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
+  process.env["PI_CODING_AGENT_DIR"] = agentDir;
+  t.after(() => {
+    if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+    else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
+  });
+  const runtime = await ModelRuntime.create({
+    authPath: join(realAgentDir, "auth.json"),
+    modelsPath: null,
+    modelsStorePath: join(agentDir, "models-store.json"),
+    allowModelNetwork: false,
+  });
+  const model = runtime.getModel("anthropic", modelId);
+  assert.ok(model, `${modelId} must exist in the installed Pi model catalog.`);
+  const send = globalThis.fetch;
+  let continuation: Request | undefined;
+  const requests: JsonObject[] = [];
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.method === "POST") {
+        const body = object(await request.clone().json());
+        // Inspect only safe metadata in assertion failures, never native content.
+        assert.equal(body["model"], modelId);
+        assert.equal(object(body["output_config"])["effort"], "low");
+        assert.equal(
+          object(object(body["thinking"])["block_binding"])["prefix_mismatch_behavior"],
+          "error",
+        );
+        requests.push(body);
+        if (!body["compaction"]) continuation = request.clone();
+      }
+      return send(request);
+    },
+  );
+  const settings = SettingsManager.inMemory({
+    compaction: { enabled: false, keepRecentTokens: 1 },
+    retry: { enabled: false },
+    ...(options.codemode ? { codemode: { mode: options.codemode } } : {}),
+  });
+  settings.setProjectTrusted(true);
+  const loader = new DefaultResourceLoader({
+    cwd: root,
+    agentDir: realAgentDir,
+    settingsManager: settings,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    additionalExtensionPaths: [patcher],
+    extensionFactories: [
+      extension,
+      (pi) =>
+        pi.on("before_provider_request", (event) => ({
+          ...object(event.payload),
+          max_tokens: 2048,
+          output_config: { effort: "low" },
+        })),
+      ...(options.codemode ? [createCodemodeExtension()] : []),
+    ],
+  });
+  await loader.reload();
+  assert.equal(loader.getExtensions().errors.length, 0);
+  const manager = SessionManager.inMemory(root);
+  const { session } = await createAgentSession({
+    cwd: root,
+    agentDir,
+    modelRuntime: runtime,
+    model,
+    thinkingLevel: "low",
+    sessionManager: manager,
+    settingsManager: settings,
+    resourceLoader: loader,
+    ...(options.customTools
+      ? { noTools: "builtin" as const, customTools: options.customTools }
+      : { noTools: "all" as const }),
+  });
+  t.after(() => session.dispose());
+  await session.bindExtensions({});
+  if (options.codemode) {
+    session.setActiveToolsByName([...session.getActiveToolNames(), "codemode"]);
+  }
+  return { session, manager, model, requests, send, continuation: () => continuation };
+}
 
 for (const modelId of ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"]) {
   test(
@@ -30,121 +164,14 @@ for (const modelId of ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5
       timeout: 180000,
     },
     async (t) => {
-      const root = await mkdtemp(join(tmpdir(), "anthropic-live-"));
-      const agentDir = join(root, "agent");
-      await mkdir(agentDir);
-      await mkdir(join(root, ".pi"));
-      await writeFile(
-        join(root, ".pi", "pi-anthropic-compat.json"),
-        JSON.stringify({ enabled: true, keepRecentTokens: 1 }),
-      );
-      // The in-process runtime must use the repository dependency's metadata, not an inherited
-      // global package directory. `mise run test:live` binds PI_PACKAGE_DIR accordingly.
-      const packageDir = getPackageDir();
-      assert.equal(
-        await realpath(packageDir),
-        await realpath(join(repository, "node_modules/@earendil-works/pi-coding-agent")),
-        "Run the live tests through `mise run test:live` so PI_PACKAGE_DIR selects the repository Pi.",
-      );
-      const realAgentDir = getAgentDir();
-      const patcher = join(
-        realAgentDir,
-        "npm",
-        "node_modules",
-        "pi-system-prompt-patcher",
-        "extensions",
-        "index.ts",
-      );
-      assert.ok(
-        existsSync(patcher),
-        "Install the system-prompt patcher before running a live Anthropic test.",
-      );
-      // The patcher reads its settings from PI_CODING_AGENT_DIR on every request. Give it an
-      // isolated copy of the effective global rules whose targets name this package directory.
-      await isolatePromptPatcher({
-        sourceAgentDir: realAgentDir,
-        agentDir,
-        provider: "anthropic",
-        model: modelId,
-        from: (await parentPackageDirectory()) ?? packageDir,
-        to: packageDir,
-      });
-      const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
-      process.env["PI_CODING_AGENT_DIR"] = agentDir;
-      t.after(() => {
-        if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
-        else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
-      });
-      const runtime = await ModelRuntime.create({
-        authPath: join(realAgentDir, "auth.json"),
-        modelsPath: null,
-        modelsStorePath: join(agentDir, "models-store.json"),
-        allowModelNetwork: false,
-      });
-      const model = runtime.getModel("anthropic", modelId);
-      assert.ok(model, `${modelId} must exist in the installed Pi model catalog.`);
-      const send = globalThis.fetch;
-      let continuation: Request | undefined;
-      const requests: JsonObject[] = [];
-      t.mock.method(
-        globalThis,
-        "fetch",
-        async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-          const request = new Request(input, init);
-          if (request.method === "POST") {
-            const body = object(await request.clone().json());
-            // Inspect only safe metadata in assertion failures, never native content.
-            assert.equal(body["model"], modelId);
-            assert.equal(object(body["output_config"])["effort"], "low");
-            assert.equal(
-              object(object(body["thinking"])["block_binding"])["prefix_mismatch_behavior"],
-              "error",
-            );
-            requests.push(body);
-            if (!body["compaction"]) continuation = request.clone();
-          }
-          return send(request);
-        },
-      );
-      const settings = SettingsManager.inMemory({
-        compaction: { enabled: false, keepRecentTokens: 1 },
-        retry: { enabled: false },
-      });
-      settings.setProjectTrusted(true);
-      const loader = new DefaultResourceLoader({
-        cwd: root,
-        agentDir: realAgentDir,
-        settingsManager: settings,
-        noSkills: true,
-        noPromptTemplates: true,
-        noThemes: true,
-        additionalExtensionPaths: [patcher],
-        extensionFactories: [
-          extension,
-          (pi) =>
-            pi.on("before_provider_request", (event) => ({
-              ...object(event.payload),
-              max_tokens: 2048,
-              output_config: { effort: "low" },
-            })),
-        ],
-      });
-      await loader.reload();
-      assert.equal(loader.getExtensions().errors.length, 0);
-      const manager = SessionManager.inMemory(root);
-      const { session } = await createAgentSession({
-        cwd: root,
-        agentDir,
-        modelRuntime: runtime,
+      const {
+        session,
+        manager,
         model,
-        thinkingLevel: "low",
-        sessionManager: manager,
-        settingsManager: settings,
-        resourceLoader: loader,
-        noTools: "all",
-      });
-      t.after(() => session.dispose());
-      await session.bindExtensions({});
+        requests,
+        send,
+        continuation: lastContinuation,
+      } = await liveSession(t, modelId);
       await session.prompt(
         "Remember these six synthetic project facts: project Lantern, language TypeScript, port 4317, storage SQLite, constraint no network access, next task implement /health. Then solve this verification problem carefully: find the smallest positive integer n such that n mod 17 = 12, n mod 19 = 8, n mod 23 = 14, and n mod 29 = 7. Check all four congruences before answering. Reply with n and the four checked remainders. Do not use tools.",
       );
@@ -232,6 +259,7 @@ for (const modelId of ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5
           messageHash(saved.retained.messages),
         "Kept messages must replay unchanged.",
       );
+      const continuation = lastContinuation();
       assert.ok(continuation);
       const valid = object(await continuation.clone().json());
       for (const invalid of [
@@ -276,3 +304,66 @@ for (const modelId of ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5
     },
   );
 }
+
+test(
+  "live claude-sonnet-5-5 keep-tail compaction declares the turn tools under codemode only mode",
+  {
+    skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+    timeout: 180000,
+  },
+  async (t) => {
+    const lookup = defineTool({
+      name: "lookup_value",
+      label: "Lookup",
+      description: "Look up a stored value by key.",
+      parameters: Type.Object({ key: Type.String() }),
+      async execute() {
+        return { content: [{ type: "text", text: "unused" }], details: {} };
+      },
+    });
+    const { session, manager, requests } = await liveSession(t, "claude-sonnet-5-5", {
+      codemode: "only",
+      customTools: [lookup],
+    });
+    await session.prompt(
+      "Remember these synthetic project facts: project Lantern, port 4317. Reply with only OK. Do not use tools.",
+    );
+    const first = session.messages.at(-1);
+    assert.ok(
+      first?.role === "assistant" && first.stopReason === "stop",
+      "The initial synthetic turn must succeed before compaction.",
+    );
+    const turn = requests.at(-1);
+    assert.ok(turn && !turn["compaction"]);
+    // Codemode `only` mode hides the direct tool from requests; scripts reach it.
+    const names = objects(turn["tools"]).map((tool) => tool["name"]);
+    assert.ok(names.includes("codemode"));
+    assert.equal(names.includes(lookup.name), false);
+
+    await session.compact("Preserve the exact synthetic project facts.");
+    const summary = requests.at(-1);
+    assert.ok(summary?.["compaction"]);
+    assert.deepEqual(summary["tools"], turn["tools"]);
+    assert.ok(activeCheckpoint(manager.getBranch())?.retained);
+
+    await session.prompt(
+      "Return only JSON with project and port (number) from the earlier project facts. Do not use tools.",
+    );
+    const last = session.messages.at(-1);
+    assert.ok(
+      last?.role === "assistant" && last.stopReason === "stop",
+      "Expected a successful continuation.",
+    );
+    const text = last.content
+      .filter((item) => item.type === "text")
+      .map((item) => item.text)
+      .join("")
+      .trim()
+      .replace(/^```(?:json)?\s*/, "")
+      .replace(/\s*```$/, "");
+    const result = object(JSON.parse(text));
+    assert.equal(result["project"], "Lantern");
+    assert.equal(result["port"], 4317);
+    assert.deepEqual(requests.at(-1)?.["tools"], turn["tools"]);
+  },
+);

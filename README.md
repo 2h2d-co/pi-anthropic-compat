@@ -81,6 +81,11 @@ thinking. Keep-tail compaction then cancels before any summary request. Models
 that receive a collapsed prompt can still retain turns made after the update.
 Full-history compaction is unaffected.
 
+Summary requests declare the tools the last turn request sent, taken from its
+saved request template. Pi codemode's `only` mode hides direct tools from turn
+requests, but the transcript still declares them. Summary requests therefore
+do not rebuild their tools from the transcript.
+
 Pi synthesizes effort-control messages around Fable responses. The extension
 removes only a verified duplicate boundary instruction that was already
 summarized. It preserves every instruction inside the retained range.
