@@ -29,7 +29,13 @@ export function retargetPackageDirectory(value: unknown, from: string, to: strin
     return { rule, target, replacement };
   });
   if (source === destination) return rules.map(({ rule }) => ({ ...rule }));
-  const isPiece = (target: string) => !target.includes(source) && source.includes(target);
+  // Only path fragments count as pieces: a general rule such as `pi` also
+  // rewrites text outside the directory and must stay a rule of its own.
+  const isPiece = (target: string) =>
+    target.startsWith("/") &&
+    target.endsWith("/") &&
+    !target.includes(source) &&
+    source.includes(target);
   let rewritten = source;
   for (const { target, replacement } of rules) {
     if (isPiece(target)) rewritten = rewritten.replaceAll(target, replacement);

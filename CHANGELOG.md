@@ -8,17 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- Declare the last turn's tools in native compaction under Pi codemode's `only`
-  mode. Summary requests rebuilt the tools from the transcript, which still
-  lists the tools codemode hides from turn requests. Full-history summaries
-  missed the prompt cache, and keep-tail compaction always cancelled.
+- Declare the tools the turns sent in native compaction under Pi codemode's
+  `only` mode. Summary requests rebuilt the tools from the transcript, which
+  still lists the tools codemode hides from turn requests. Full-history
+  summaries missed the prompt cache, and keep-tail compaction always cancelled.
 - Resume sessions whose saved `/anthropic-settings` values include a setting a later
   version removed or no longer accepts. Those fields are skipped instead of failing
   the whole record at session start.
 
 ### Changed
 
-- Require Pi 0.99.1 or newer.
+- Require Pi 0.99.1 or newer. The extension refuses to load on an older Pi.
 
 ## [0.0.7] - 2026-09-30
 
@@ -95,7 +95,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Strict thinking-prefix enforcement for retained history and a live Fable 5.1 low-effort test with rejection controls.
 - Live packaged-CLI test that exercises native compaction, replay, and resume through the shipped Pi executable.
 
-[Unreleased]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.6...HEAD
+[Unreleased]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.7...HEAD
+[0.0.7]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.3...v0.0.4

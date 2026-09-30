@@ -3,6 +3,7 @@
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/compat";
 import {
   getCurrentSystemMessage,
+  getCurrentTools,
   normalizeContext,
   type Api,
   type Message,
@@ -89,6 +90,50 @@ export function requireCompletedTools(messages: readonly Message[]): void {
  * tools leads, followed by the retained messages. Serializing this shape, rather than
  * the retained messages alone, proves the tail survives the compaction entry unchanged.
  */
+/**
+ * Current transcript tools the last turn request did not send. Pi hides them
+ * from requests in codemode `only` mode. Pi hides only current tools, and a
+ * tool a turn removed is no longer current. Names compare case-insensitively,
+ * because OAuth requests send Claude Code's capitalized names for Pi's tools.
+ */
+export function hiddenTools(
+  messages: readonly Message[],
+  savedTemplate: JsonObject,
+): ReadonlySet<string> {
+  const tools = savedTemplate["tools"];
+  const sent = new Set(
+    (Array.isArray(tools) ? objects(tools) : []).flatMap((tool) =>
+      typeof tool["name"] === "string" ? [tool["name"].toLowerCase()] : [],
+    ),
+  );
+  return new Set(
+    getCurrentTools([...messages])
+      .map((tool) => tool.name)
+      .filter((name) => !sent.has(name.toLowerCase())),
+  );
+}
+
+/** Remove hidden tools from every tool declaration change, as Pi projects requests. */
+export function withoutHiddenTools(
+  messages: readonly Message[],
+  hidden: ReadonlySet<string>,
+): Message[] {
+  if (hidden.size === 0) return [...messages];
+  return messages.map((message) => {
+    if (message.role !== "system" || (!message.toolsAdded && !message.toolsRemoved)) {
+      return message;
+    }
+    const { toolsAdded, toolsRemoved, ...rest } = message;
+    const added = toolsAdded?.filter((tool) => !hidden.has(tool.name)) ?? [];
+    const removed = toolsRemoved?.filter((tool) => !hidden.has(tool.name)) ?? [];
+    return {
+      ...rest,
+      ...(added.length > 0 ? { toolsAdded: added } : {}),
+      ...(removed.length > 0 ? { toolsRemoved: removed } : {}),
+    };
+  });
+}
+
 export function compactedTranscript(
   whole: readonly Message[],
   kept: readonly Message[],
@@ -223,9 +268,14 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
       signal.throwIfAborted();
       // Prompt and tool declarations travel as system messages inside the transcript.
       const active = buildSessionContext(branch, leaf).messages;
-      const messages = convertToLlm(
+      // Pi leaves tools it hides (codemode `only` mode) out of every request
+      // after extensions see the transcript. The saved template lists the tools
+      // the last turn sent, so the others are removed here as Pi removes them.
+      const transcript = convertToLlm(
         saved ? active.filter((message) => message.role !== "compactionSummary") : active,
       );
+      const hidden = hiddenTools(transcript, savedTemplate);
+      const messages = withoutHiddenTools(transcript, hidden);
       requireCompletedTools(messages);
       const level = pi.getThinkingLevel();
       const serializationOptions: SimpleStreamOptions = {
@@ -236,17 +286,28 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
         onPayload: async (payload, selected) => {
           const updated = await currentTransform?.(payload, selected);
           const result = object(updated === undefined ? payload : updated);
-          // The branch still declares tools that Pi strips from turn requests
-          // after extensions see the transcript (codemode `only` mode), so
-          // only the saved template holds the tools the last turn sent.
-          const keys = currentTransform
-            ? (["tools"] as const)
-            : (["system", "tools", "thinking", "output_config"] as const);
-          for (const key of keys) {
-            if (savedTemplate[key] === undefined) delete result[key];
-            else result[key] = savedTemplate[key];
+          if (!currentTransform) {
+            for (const key of ["system", "tools", "thinking", "output_config"] as const) {
+              if (savedTemplate[key] === undefined) delete result[key];
+              else result[key] = savedTemplate[key];
+            }
           }
           return configuration(ctx).keepRecentTokens > 0 ? enforceThinking(result) : result;
+        },
+      };
+      // The retained tail must be checked against the tools Pi will send after
+      // compaction, which come from the compacted snapshot. Saved tools would
+      // hide a tool change and let a billed summary strand the conversation.
+      const tailSerializationOptions: SimpleStreamOptions = {
+        ...serializationOptions,
+        onPayload: async (payload, selected) => {
+          const result = object(await serializationOptions.onPayload?.(payload, selected));
+          if (!currentTransform) {
+            const serialized = object(payload)["tools"];
+            if (serialized === undefined) delete result["tools"];
+            else result["tools"] = serialized;
+          }
+          return result;
         },
       };
       // Serialize without transmission, then select only a proven earlier request.
@@ -267,12 +328,12 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
           : undefined;
       let retained: RetainedHistory | undefined;
       if (selection) {
-        const keptMessages = convertToLlm(selection.keptMessages);
+        const keptMessages = withoutHiddenTools(convertToLlm(selection.keptMessages), hidden);
         requireCompletedTools(keptMessages);
         const tailRequest = await prepareRequest(
           requestModel,
           compactedTranscript(messages, keptMessages),
-          serializationOptions,
+          tailSerializationOptions,
         );
         retained = prepareRetained(
           selection.tail,

@@ -79,11 +79,14 @@ test("composes rules that rewrite the package directory in pieces", () => {
     { target: `${root}/`, replacement: "/renamed/installs/" },
     { target: "/lib/node_modules/@earendil-works/pi-coding-agent/", replacement: "/lib/agent/" },
     { target: "~/.pi/agent/", replacement: "~/.agent/" },
+    // Text inside the directory, but a general rule, not a path piece.
+    { target: "pi", replacement: "agent" },
   ];
   assert.deepEqual(retargetPackageDirectory(rules, from, to), [
     { target: "You are pi.", replacement: "You are an agent." },
     { target: `${to}/`, replacement: "/renamed/installs/0.99.1/lib/agent/" },
     { target: "~/.pi/agent/", replacement: "~/.agent/" },
+    { target: "pi", replacement: "agent" },
   ]);
   // The runtime the rules describe keeps them unchanged.
   assert.deepEqual(retargetPackageDirectory(rules, from, from), rules);

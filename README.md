@@ -3,7 +3,8 @@
 Native Anthropic compatibility for Pi, starting with signed on-demand compaction.
 
 Requires **Pi 0.99.1 or newer** and Node.js 22.19 or newer. Releases are
-validated against Pi 0.99.1.
+validated against Pi 0.99.1. The extension refuses to load on an older Pi,
+because Pi does not enforce the package's peer range when it installs packages.
 
 ## Install
 
@@ -81,10 +82,12 @@ thinking. Keep-tail compaction then cancels before any summary request. Models
 that receive a collapsed prompt can still retain turns made after the update.
 Full-history compaction is unaffected.
 
-Summary requests declare the tools the last turn request sent, taken from its
-saved request template. Pi codemode's `only` mode hides direct tools from turn
-requests, but the transcript still declares them. Summary requests therefore
-do not rebuild their tools from the transcript.
+Pi codemode's `only` mode hides direct tools from turn requests, but the
+transcript still declares them. Summary requests leave out every current
+transcript tool that the last turn request did not send, as its saved request
+template records, so they declare the tools the turns sent. The retained-tail
+check uses the tools Pi will send after compaction, so a tool change still
+cancels keep-tail compaction before any summary request.
 
 Pi synthesizes effort-control messages around Fable responses. The extension
 removes only a verified duplicate boundary instruction that was already
@@ -288,9 +291,10 @@ for the model under test wins over the provider file, and relative, absolute,
 and `~/` references are all accepted. They copy those rules into the isolated
 agent directory, rewrite package-directory references in the match targets for
 the runtime under test, and write isolated patcher settings that point at the
-copy. Rules that rewrite the package directory in pieces, such as its
+copy. Rules that rewrite the package directory in path pieces, such as its
 installation root and the package path around a version segment, become one rule
-for the runtime under test with the same result. Replacement text and global
+for the runtime under test with the same result. A path piece is a target that
+starts and ends with `/`; other rules stay as they are. Replacement text and global
 configuration remain unchanged. The Mise task records the parent's
 `PI_PACKAGE_DIR` in `PI_ANTHROPIC_PARENT_PACKAGE_DIR` before binding the
 repository Pi, because global rules describe that parent runtime. When the

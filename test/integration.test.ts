@@ -12,12 +12,14 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { InMemoryCredentialStore, Type } from "@earendil-works/pi-ai";
+import { InMemoryCredentialStore, Type, type Message } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import {
   registerCompatibility,
   activeCheckpoint,
   activeTemplate,
+  hiddenTools,
+  withoutHiddenTools,
 } from "../extensions/anthropic-compat/runtime.ts";
 import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
 import { block, model, summaryResponse, textResponse } from "./fixtures.ts";
@@ -650,3 +652,89 @@ for (const codemode of ["on", "only"] as const) {
     });
   }
 }
+
+for (const keepRecentTokens of [0, 1]) {
+  test(`codemode only mode keeps a direct tool added mid-session out of summaries with keepRecentTokens=${keepRecentTokens}`, async (t) => {
+    const { session, requests } = await setup(t, {
+      codemode: "only",
+      keepRecentTokens,
+      modelId: "claude-opus-5-5",
+      managed: true,
+    });
+    session.setActiveToolsByName(["handoff", "codemode"]);
+    await session.prompt("Remember the synthetic project Lantern.");
+    // A later system message declares `report`; Pi hides it from requests.
+    session.setActiveToolsByName(["report", "handoff", "codemode"]);
+    await session.prompt("Remember the synthetic city Harbor.");
+    const turn = requests.at(-1);
+    assert.ok(turn && !turn["compaction"]);
+    assert.doesNotMatch(JSON.stringify(turn), /"report"/);
+    const summaries = () => requests.filter((request) => request["compaction"]);
+    if (keepRecentTokens === 0) {
+      await session.compact();
+      const summary = summaries().at(-1);
+      assert.ok(summary);
+      assert.deepEqual(summary["tools"], turn["tools"]);
+      assert.doesNotMatch(JSON.stringify(summary), /"report"/);
+    } else {
+      // The tool change redefined `codemode`, so Pi's compacted snapshot
+      // declares tools differently from the turn. Keep-tail cancels before
+      // billing, as for any tool update.
+      await assert.rejects(session.compact(), /cancelled/);
+      assert.equal(summaries().length, 0);
+    }
+    await session.prompt("Continue.");
+    const last = session.messages.at(-1);
+    assert.ok(last?.role === "assistant" && last.stopReason === "stop", JSON.stringify(last));
+  });
+}
+
+test("a tool removed before keep-tail compaction cancels before billing", async (t) => {
+  const { session, requests } = await setup(t, {
+    codemode: "on",
+    keepRecentTokens: 1,
+    modelId: "claude-opus-5-5",
+    managed: true,
+  });
+  await session.prompt("Remember the synthetic project Lantern.");
+  session.setActiveToolsByName(["handoff", "codemode"]);
+  await session.prompt("Remember the synthetic city Harbor.");
+  const summaries = () => requests.filter((request) => request["compaction"]).length;
+  // Pi's compacted snapshot declares only current tools, so the retained tail
+  // cannot replay; keep-tail cancels before any summary request.
+  await assert.rejects(session.compact(), /cancelled/);
+  assert.equal(summaries(), 0);
+  await session.prompt("Continue.");
+  const last = session.messages.at(-1);
+  assert.ok(last?.role === "assistant" && last.stopReason === "stop", JSON.stringify(last));
+});
+
+test("hidden tools are the current transcript tools the last turn did not send", () => {
+  const declare = (name: string) => ({
+    name,
+    description: name,
+    parameters: Type.Object({}),
+  });
+  const messages: Message[] = [
+    {
+      role: "system",
+      content: "prompt",
+      toolsAdded: [declare("read"), declare("report"), declare("codemode")],
+      timestamp: 0,
+    },
+    { role: "system", content: "", toolsRemoved: [declare("codemode")], timestamp: 1 },
+    { role: "system", content: "", toolsAdded: [declare("codemode")], timestamp: 2 },
+  ];
+  // OAuth requests send Claude Code's capitalized name for `read`.
+  const sent = { tools: [{ name: "Read" }, { name: "codemode" }] };
+  const hidden = hiddenTools(messages, sent);
+  assert.deepEqual([...hidden], ["report"]);
+  const projected = withoutHiddenTools(messages, hidden);
+  assert.deepEqual(
+    projected.flatMap((message) =>
+      message.role === "system" ? (message.toolsAdded ?? []).map((tool) => tool.name) : [],
+    ),
+    ["read", "codemode", "codemode"],
+  );
+  assert.equal(withoutHiddenTools(messages, new Set()).length, messages.length);
+});

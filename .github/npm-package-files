@@ -4,6 +4,7 @@ README.md
 extensions/anthropic-compat/client.ts
 extensions/anthropic-compat/config.ts
 extensions/anthropic-compat/json.ts
+extensions/anthropic-compat/pi-version.ts
 extensions/anthropic-compat/protocol.ts
 extensions/anthropic-compat/runtime.ts
 extensions/anthropic-compat/settings.ts
