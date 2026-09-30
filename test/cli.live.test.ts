@@ -85,10 +85,13 @@ for (const { modelId, keepRecentTokens } of scenarios) {
       const manifest = object(JSON.parse(await readFile(join(piRoot, "package.json"), "utf8")));
       const piVersion = manifest["version"];
       assert.ok(typeof piVersion === "string", "Pi manifest version is required.");
-      const [major = 0, minor = 0] = piVersion.split(".").map(Number);
-      assert.ok(major > 0 || minor >= 87, `Pi ${piVersion} predates the supported range.`);
+      const [major = 0, minor = 0, patch = 0] = piVersion.split(".").map(Number);
+      assert.ok(
+        major > 0 || minor > 99 || (minor === 99 && patch >= 1),
+        `Pi ${piVersion} predates the supported range.`,
+      );
       // Drive each executable with its own RPC client: the protocol changes between Pi
-      // versions, and the Mise-installed baseline can predate the repository dependency.
+      // versions, and the Mise-installed baseline can differ from the repository dependency.
       const { RpcClient } = await loadRpcClient(piRoot);
 
       // Isolated agent state with the real Claude login and the required prompt patcher.

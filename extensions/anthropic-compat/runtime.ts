@@ -150,7 +150,7 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
     transformModel = undefined;
   });
   // The full-transcript event returns messages verbatim. A changed `context`
-  // result on Pi 0.87 folds every later system message into the leading one,
+  // result folds every later system message into the leading one,
   // which changes the serialized `system` template after a checkpoint and
   // breaks retained-history replay.
   pi.on("context_with_system", (event, ctx) => {
