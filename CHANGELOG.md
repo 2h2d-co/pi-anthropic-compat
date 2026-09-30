@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Resume sessions whose saved `/anthropic-settings` values include a setting a later
+  version removed or no longer accepts. Those fields are skipped instead of failing
+  the whole record at session start.
+
 ### Changed
 
 - Require Pi 0.99.1 or newer.
