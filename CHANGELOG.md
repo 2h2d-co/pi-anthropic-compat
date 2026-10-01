@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-10-01
+
 ### Fixed
 
 - Declare the tools the turns sent in native compaction under Pi codemode's
@@ -95,7 +97,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Strict thinking-prefix enforcement for retained history and a live Fable 5.1 low-effort test with rejection controls.
 - Live packaged-CLI test that exercises native compaction, replay, and resume through the shipped Pi executable.
 
-[Unreleased]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.7...HEAD
+[Unreleased]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.8...HEAD
+[0.0.8]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.4...v0.0.5
