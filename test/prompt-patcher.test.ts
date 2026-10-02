@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
-import { pathToFileURL } from "node:url";
-import { getAgentDir, getPackageDir } from "@earendil-works/pi-coding-agent";
+import {
+  DefaultResourceLoader,
+  SettingsManager,
+  getAgentDir,
+  getPackageDir,
+} from "@earendil-works/pi-coding-agent";
 import {
   ISOLATED_REPLACEMENT_FILE,
   isolatePromptPatcher,
@@ -25,11 +29,7 @@ type PatcherHandler = (
     abort: () => void;
     ui: { notify: (message: string, level: "error") => void };
   },
-) => unknown;
-
-type PatcherExtension = (pi: {
-  on: (event: "before_provider_request", handler: PatcherHandler) => void;
-}) => void;
+) => Promise<unknown>;
 
 const PROVIDER = "anthropic";
 const MODEL = "claude-fable-5-1";
@@ -244,7 +244,7 @@ for (const [reference, describeSettings] of [
         messages: [{ role: "user", content: "unchanged" }],
       };
       const applied = requestContext();
-      assert.deepEqual(handler({ payload }, applied.ctx), {
+      assert.deepEqual(await handler({ payload }, applied.ctx), {
         ...payload,
         system: `Docs moved from ${from}/\nUpdated instruction`,
       });
@@ -262,7 +262,7 @@ for (const [reference, describeSettings] of [
       // The patcher also logs the expected failure; keep the test output clean.
       t.mock.method(console, "error", () => undefined);
       const unchanged = requestContext();
-      assert.equal(handler({ payload }, unchanged.ctx), undefined);
+      assert.equal(await handler({ payload }, unchanged.ctx), undefined);
       assert.equal(unchanged.errors.length, 1);
       assert.match(unchanged.errors[0] ?? "", /target was not found|failed to read/);
       assert.equal(unchanged.aborts.count, reference === "relative" ? 0 : 1);
@@ -335,32 +335,26 @@ test("isolation preserves missing settings and a configured provider's no-op beh
   assert.equal(existsSync(join(agent, ISOLATED_REPLACEMENT_FILE)), false);
 });
 
-// Node does not strip types under node_modules, so import an exact copy of the installed source.
-// The patcher imports only Node built-ins.
+// Load installed TypeScript through Pi so host imports use the same aliases as a real session.
 async function loadInstalledPatcher(temporary: string): Promise<PatcherHandler> {
-  const copy = join(temporary, "pi-system-prompt-patcher.ts");
-  await copyFile(installedPatcher, copy);
-  const module: unknown = await import(pathToFileURL(copy).href);
-  const extension = object(module)["default"];
-  assert.ok(isPatcherExtension(extension), "The patcher exports a default factory.");
-  let handler: PatcherHandler | undefined;
-  extension({
-    on(_event, candidate) {
-      handler = candidate;
-    },
+  const loader = new DefaultResourceLoader({
+    cwd: temporary,
+    agentDir: join(temporary, "loader-agent"),
+    settingsManager: SettingsManager.inMemory(),
+    additionalExtensionPaths: [installedPatcher],
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
   });
+  await loader.reload();
+  const loaded = loader.getExtensions();
+  assert.deepEqual(loaded.errors, []);
+  const extension = loaded.extensions.find((candidate) => candidate.path === installedPatcher);
+  assert.ok(extension, "Pi loads the installed patcher.");
+  const [handler] = extension.handlers.get("before_provider_request") ?? [];
   assert.ok(handler, "The patcher registers a before_provider_request handler.");
   return handler;
-}
-
-function isPatcherExtension(value: unknown): value is PatcherExtension {
-  return typeof value === "function";
-}
-
-// A module namespace is not a JSON object; read the default export without asserting a type.
-function object(value: unknown): Record<string, unknown> {
-  assert.ok(typeof value === "object" && value !== null, "Expected a module namespace.");
-  return Object.fromEntries(Object.entries(value));
 }
 
 function requestContext() {

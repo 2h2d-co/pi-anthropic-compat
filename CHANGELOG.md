@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-10-02
+
+### Changed
+
+- Require Pi 1.0.0 or newer. Restart Pi after upgrading its runtime.
+  If the last compaction kept recent messages, set Native tail tokens to `0`
+  and compact the full conversation before upgrading Pi. Changes to prompt text
+  and tool declarations can invalidate retained history, even when thinking is off.
+
 ## [0.0.8] - 2026-10-01
 
 ### Fixed
@@ -97,7 +106,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Strict thinking-prefix enforcement for retained history and a live Fable 5.1 low-effort test with rejection controls.
 - Live packaged-CLI test that exercises native compaction, replay, and resume through the shipped Pi executable.
 
-[Unreleased]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.8...HEAD
+[Unreleased]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.9...HEAD
+[0.0.9]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/2h2d-co/pi-anthropic-compat/compare/v0.0.5...v0.0.6

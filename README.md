@@ -2,8 +2,8 @@
 
 Native Anthropic compatibility for Pi, starting with signed on-demand compaction.
 
-Requires **Pi 0.99.1 or newer** and Node.js 22.19 or newer. Releases are
-validated against Pi 0.99.1. The extension refuses to load on an older Pi,
+Requires **Pi 1.0.0 or newer** and Node.js 22.19 or newer. Releases are
+validated against Pi 1.0.0. The extension refuses to load on an older Pi,
 because Pi does not enforce the package's peer range when it installs packages.
 
 ## Install
@@ -72,6 +72,9 @@ When thinking is enabled, keep-tail mode explicitly requests
 thinking. Turning retention off does not discard a previously retained range.
 To change system instructions or tools, first compact the whole conversation
 with `keepRecentTokens: 0`, then make the change.
+Do this before upgrading Pi if the last compaction kept recent messages.
+Runtime upgrades can change prompt text and tool declarations, which can
+invalidate retained history even when thinking is off.
 
 Pi records the current prompt and tool declarations on every compaction entry
 and leads the compacted context with that snapshot. Models that accept prompt
@@ -279,7 +282,7 @@ continuation, a restart, and a resumed continuation. Tool declarations and the
 tool-call/result pair therefore pass through the summary request and replay.
 Fact recall after compaction proves the signed block replayed, because the
 extension withholds Pi's summary message once a checkpoint exists. The test
-requires Pi 0.99.1 or newer. `PI_ANTHROPIC_CLI_PATH` selects the `cli.js` under
+requires exactly Pi 1.0.0. `PI_ANTHROPIC_CLI_PATH` selects the `cli.js` under
 test; the Mise task sets it for each run.
 Fable tests retain recent messages. Opus 5.5 and Sonnet 5.5 tests cover both
 full-history and retained-message compaction. The default test suite and CI skip live tests.
@@ -305,10 +308,10 @@ directory explicitly. An empty value leaves targets unchanged, and the patcher
 reports any mismatch.
 
 `mise run test:live` is the complete release validation. It runs the SDK and CLI
-tests against the Pi 0.99.1 development dependency, then repeats the Fable CLI
-test against Mise-installed Pi. The installed-runtime check requires Pi 0.99.1 or
-newer and uses Fable for baseline coverage. Opus 5.5 and Sonnet 5.5 coverage
-always uses the repository's Pi 0.99.1 catalog. Live test files run sequentially to limit
+tests against the Pi 1.0.0 development dependency, then repeats the Fable CLI
+test against Mise-installed Pi. Both CLI runs require exactly Pi 1.0.0.
+The installed-runtime check uses Fable for baseline coverage. Opus 5.5 and Sonnet 5.5 coverage
+always uses the repository's Pi 1.0.0 catalog. Live test files run sequentially to limit
 concurrent requests against the same account.
 Set `PI_PACKAGE_ARCHIVE` to test a prepared archive instead of packing the
 working directory. A relative path resolves from the current working
