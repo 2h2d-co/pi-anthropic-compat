@@ -29,7 +29,11 @@ const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 async function liveSession(
   t: TestContext,
   modelId: string,
-  options: { codemode?: "on" | "only"; customTools?: ToolDefinition[] } = {},
+  options: {
+    codemode?: "on" | "only";
+    customTools?: ToolDefinition[];
+    keepRecentTokens?: number;
+  } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "anthropic-live-"));
   const agentDir = join(root, "agent");
@@ -37,7 +41,7 @@ async function liveSession(
   await mkdir(join(root, ".pi"));
   await writeFile(
     join(root, ".pi", "pi-anthropic-compat.json"),
-    JSON.stringify({ enabled: true, keepRecentTokens: 1 }),
+    JSON.stringify({ enabled: true, keepRecentTokens: options.keepRecentTokens ?? 1 }),
   );
   // The in-process runtime must use the repository dependency's metadata, not an inherited
   // global package directory. `mise run test:live` binds PI_PACKAGE_DIR accordingly.
@@ -97,10 +101,13 @@ async function liveSession(
         // Inspect only safe metadata in assertion failures, never native content.
         assert.equal(body["model"], modelId);
         assert.equal(object(body["output_config"])["effort"], "low");
-        assert.equal(
-          object(object(body["thinking"])["block_binding"])["prefix_mismatch_behavior"],
-          "error",
-        );
+        // Thinking-prefix enforcement applies only when compaction retains recent messages.
+        if ((options.keepRecentTokens ?? 1) > 0) {
+          assert.equal(
+            object(object(body["thinking"])["block_binding"])["prefix_mismatch_behavior"],
+            "error",
+          );
+        }
         requests.push(body);
         if (!body["compaction"]) continuation = request.clone();
       }
@@ -365,5 +372,93 @@ test(
     assert.equal(result["project"], "Lantern");
     assert.equal(result["port"], 4317);
     assert.deepEqual(requests.at(-1)?.["tools"], turn["tools"]);
+  },
+);
+
+test(
+  "live claude-sonnet-5-5 full-history compaction keeps a tool added mid-conversation callable",
+  {
+    skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+    timeout: 180000,
+  },
+  async (t) => {
+    const lookup = defineTool({
+      name: "lookup_value",
+      label: "Lookup",
+      description: "Look up a stored value by key.",
+      parameters: Type.Object({ key: Type.String() }),
+      async execute() {
+        return { content: [{ type: "text", text: "unused" }], details: {} };
+      },
+    });
+    const recalled: string[] = [];
+    const recall = defineTool({
+      name: "recall_code",
+      label: "Recall",
+      description: "Return the synthetic verification code for a project.",
+      parameters: Type.Object({ project: Type.String() }),
+      async execute(_id, params) {
+        recalled.push(params.project);
+        return { content: [{ type: "text", text: "Verification code: 7341" }], details: {} };
+      },
+    });
+    const { session, requests } = await liveSession(t, "claude-sonnet-5-5", {
+      customTools: [lookup, recall],
+      keepRecentTokens: 0,
+    });
+    session.setActiveToolsByName([lookup.name]);
+    await session.prompt(
+      "Remember these synthetic project facts: project Lantern, port 4317. Reply with only OK. Do not use tools.",
+    );
+    const first = requests.at(-1);
+    assert.ok(first && !first["compaction"]);
+    const initialTools = first["tools"];
+
+    // Pi 1.0.1 defines a tool added after the first request inline, in a system message,
+    // and keeps the request-level tool list unchanged.
+    session.setActiveToolsByName([lookup.name, recall.name]);
+    await session.prompt("Reply with only OK. Do not use tools.");
+    const added = requests.at(-1);
+    assert.ok(added && !added["compaction"]);
+    assert.deepEqual(added["tools"], initialTools);
+    const definitions = objects(added["messages"]).flatMap((message) =>
+      objects(message["content"]).flatMap((block) => {
+        if (block["type"] !== "tool_addition") return [];
+        const tool = object(block["tool"]);
+        return tool["type"] === "tool_definition" ? [object(tool["definition"])["name"]] : [];
+      }),
+    );
+    assert.deepEqual(definitions, [recall.name]);
+    const turn = session.messages.at(-1);
+    assert.ok(
+      turn?.role === "assistant" && turn.stopReason === "stop",
+      "Anthropic must accept the inline tool definition.",
+    );
+
+    await session.compact("Preserve the exact synthetic project facts.");
+    const summary = requests.at(-1);
+    assert.ok(summary?.["compaction"]);
+
+    await session.prompt(
+      "Call recall_code once with project Lantern, then reply with only the verification code it returns.",
+    );
+    const last = session.messages.at(-1);
+    assert.ok(
+      last?.role === "assistant" && last.stopReason === "stop",
+      "Expected a successful continuation.",
+    );
+    assert.deepEqual(recalled, ["Lantern"]);
+    assert.match(
+      last.content
+        .filter((item) => item.type === "text")
+        .map((item) => item.text)
+        .join(""),
+      /7341/,
+    );
+    const names = objects(requests.at(-1)?.["tools"]).map((tool) => tool["name"]);
+    assert.ok(names.includes(recall.name));
+    t.diagnostic(
+      "claude-sonnet-5-5 accepted an inline tool definition, compacted the full history, and called the added tool afterwards.",
+    );
   },
 );

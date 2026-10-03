@@ -85,7 +85,7 @@ for (const { modelId, keepRecentTokens } of scenarios) {
       const manifest = object(JSON.parse(await readFile(join(piRoot, "package.json"), "utf8")));
       const piVersion = manifest["version"];
       assert.ok(typeof piVersion === "string", "Pi manifest version is required.");
-      assert.equal(piVersion, "1.0.0", "Live validation requires the targeted Pi release.");
+      assert.equal(piVersion, "1.0.1", "Live validation requires the targeted Pi release.");
       // Drive each executable with its own RPC client rather than mixing installations.
       const { RpcClient } = await loadRpcClient(piRoot);
 
