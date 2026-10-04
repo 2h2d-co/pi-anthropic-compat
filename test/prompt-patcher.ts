@@ -3,13 +3,16 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { object } from "../extensions/anthropic-compat/json.ts";
 
 export const PATCHER_SETTINGS_FILE = "pi-system-prompt-patcher.json";
 export const ISOLATED_REPLACEMENT_FILE = "pi-system-prompt-patcher-replacements.json";
-// Names the Pi package directory that the global prompt-patcher rules describe.
+// Names the Pi package directory that the global prompt-patcher rules describe. Live tests require
+// it because only the user's environment knows that installation; the repository never records it.
 export const PARENT_PACKAGE_DIR_VARIABLE = "PI_ANTHROPIC_PARENT_PACKAGE_DIR";
+export const MISSING_PARENT_PACKAGE_DIR =
+  `Set ${PARENT_PACKAGE_DIR_VARIABLE} to the Pi package directory that your global ` +
+  "prompt-patcher rules describe, or to an empty value when no rule names a Pi package path.";
 
 // Change only package-directory references in match targets, never replacement text.
 // Rules can also rewrite the package directory in pieces, such as its installation root and
@@ -120,15 +123,16 @@ export async function isolatePromptPatcher(options: {
 /**
  * The package directory that global prompt-patcher rules describe, from
  * PI_ANTHROPIC_PARENT_PACKAGE_DIR expanded like Pi's runtime. An empty value supplies no known
- * source, so targets remain unchanged and the patcher detects any mismatch. Without a value the
- * in-process package directory is the source.
+ * source, so targets remain unchanged and the patcher detects any mismatch. A missing value is an
+ * error rather than a guess.
  */
 export async function parentPackageDirectory(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string | undefined> {
   const captured = env[PARENT_PACKAGE_DIR_VARIABLE];
+  if (captured === undefined) throw new Error(MISSING_PARENT_PACKAGE_DIR);
   if (captured === "") return undefined;
-  const directory = captured === undefined ? getPackageDir() : resolve(expandTilde(captured));
+  const directory = resolve(expandTilde(captured));
   const manifest = join(directory, "package.json");
   assert.ok(existsSync(manifest), `${directory} is not a Pi package directory.`);
   assert.equal(

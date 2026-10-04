@@ -5,14 +5,11 @@ import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-  DefaultResourceLoader,
-  SettingsManager,
-  getPackageDir,
-} from "@earendil-works/pi-coding-agent";
+import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
 import {
   ISOLATED_REPLACEMENT_FILE,
   isolatePromptPatcher,
+  MISSING_PARENT_PACKAGE_DIR,
   PARENT_PACKAGE_DIR_VARIABLE,
   PATCHER_SETTINGS_FILE,
   parentPackageDirectory,
@@ -263,7 +260,7 @@ for (const [reference, describeSettings] of [
   });
 }
 
-test("reads the captured parent package directory and verifies it is a Pi package", async (t) => {
+test("requires the parent package directory and verifies it is a Pi package", async (t) => {
   const temporary = await mkdtemp(join(tmpdir(), "anthropic-parent-pi-"));
   t.after(() => rm(temporary, { recursive: true, force: true }));
   const home = join(temporary, "home");
@@ -281,8 +278,11 @@ test("reads the captured parent package directory and verifies it is a Pi packag
   );
   // An empty capture supplies no known source package path.
   assert.equal(await parentPackageDirectory({ [PARENT_PACKAGE_DIR_VARIABLE]: "" }), undefined);
-  // Without a capture the in-process package directory is the parent's.
-  assert.equal(await parentPackageDirectory({}), getPackageDir());
+  // A missing value is an explicit error that names the variable, not a guessed directory.
+  await assert.rejects(parentPackageDirectory({}), {
+    message: MISSING_PARENT_PACKAGE_DIR,
+  });
+  assert.doesNotMatch(MISSING_PARENT_PACKAGE_DIR, /\//);
   const other = join(temporary, "other");
   await mkdir(other);
   await assert.rejects(

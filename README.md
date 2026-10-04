@@ -303,11 +303,15 @@ copy. Rules that rewrite the package directory in path pieces, such as its
 installation root and the package path around a version segment, become one rule
 for the runtime under test with the same result. A path piece is a target that
 starts and ends with `/`; other rules stay as they are. Replacement text and global
-configuration remain unchanged. Set `PI_ANTHROPIC_PARENT_PACKAGE_DIR` to the Pi
-package directory that the global rules describe. The tests verify it is a Pi
-package. Without it, the source is the repository Pi itself, so targets stay
-unchanged. An empty value also leaves targets unchanged. The patcher reports
-any target missing from the prompt.
+configuration remain unchanged.
+
+Live tests require `PI_ANTHROPIC_PARENT_PACKAGE_DIR`, the Pi package directory
+that your global rules describe. Only your environment knows that installation,
+so set the variable in your own shell or user configuration, never in this
+repository. The tests verify it is a Pi package. Set it to an empty value when
+no rule names a Pi package path; targets then stay unchanged, and the patcher
+reports any target missing from the prompt. `npm run test:live` stops before
+any test when the variable is missing.
 
 `npm run test:live` is the complete release validation. `scripts/test-live.ts`
 runs the packaged settings tests offline, then the SDK and CLI tests against
