@@ -24,7 +24,6 @@
   interaction tests in `test/settings-menu.test.ts`.
 - Preserve unrelated concurrent filesystem changes. Ask only when they directly conflict with scoped work.
 - Run complete non-writing validation through `mise run check`.
-- Run `npm run check` and `npm test` before committing meaningful code changes.
 - Run `npm run pack:dry` to inspect the npm package contents before release.
 - Keep `.github/npm-package-files` synchronized with every intentional package-content change; local release validation and both CI jobs enforce it exactly.
 - Use Conventional Commits and maintain `CHANGELOG.md` in Keep a Changelog style; add entries for `feat:` and `fix:` changes under `Unreleased`.
