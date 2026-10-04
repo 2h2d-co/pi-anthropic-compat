@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import manifest from "../package.json" with { type: "json" };
 type RpcClientModule =
   typeof import("../node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-client.js");
 import { object } from "../extensions/anthropic-compat/json.ts";
@@ -82,10 +83,13 @@ for (const { modelId, keepRecentTokens } of scenarios) {
           join(root, "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"),
       );
       const piRoot = resolve(dirname(cli), "../..");
-      const manifest = object(JSON.parse(await readFile(join(piRoot, "package.json"), "utf8")));
-      const piVersion = manifest["version"];
-      assert.ok(typeof piVersion === "string", "Pi manifest version is required.");
-      assert.equal(piVersion, "1.0.1", "Live validation requires the targeted Pi release.");
+      const piManifest = object(JSON.parse(await readFile(join(piRoot, "package.json"), "utf8")));
+      const piVersion = manifest.devDependencies["@earendil-works/pi-coding-agent"];
+      assert.equal(
+        piManifest["version"],
+        piVersion,
+        "Live validation requires the Pi version pinned as the development dependency.",
+      );
       // Drive each executable with its own RPC client rather than mixing installations.
       const { RpcClient } = await loadRpcClient(piRoot);
 
