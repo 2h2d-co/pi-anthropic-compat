@@ -8,8 +8,7 @@ import { object } from "../extensions/anthropic-compat/json.ts";
 
 export const PATCHER_SETTINGS_FILE = "pi-system-prompt-patcher.json";
 export const ISOLATED_REPLACEMENT_FILE = "pi-system-prompt-patcher-replacements.json";
-// The Mise live task captures the parent's Pi package root here before binding PI_PACKAGE_DIR
-// to the repository dependency. Global prompt-patcher rules describe that parent runtime.
+// Names the Pi package directory that the global prompt-patcher rules describe.
 export const PARENT_PACKAGE_DIR_VARIABLE = "PI_ANTHROPIC_PARENT_PACKAGE_DIR";
 
 // Change only package-directory references in match targets, never replacement text.
@@ -119,10 +118,10 @@ export async function isolatePromptPatcher(options: {
 }
 
 /**
- * The package directory that global prompt-patcher rules describe. The Mise live task records
- * parent's PI_PACKAGE_DIR, expanded like Pi's runtime. An empty capture supplies no known
- * source, so targets remain unchanged and the patcher detects any mismatch. A direct invocation
- * without a capture uses the in-process package directory as its source.
+ * The package directory that global prompt-patcher rules describe, from
+ * PI_ANTHROPIC_PARENT_PACKAGE_DIR expanded like Pi's runtime. An empty value supplies no known
+ * source, so targets remain unchanged and the patcher detects any mismatch. Without a value the
+ * in-process package directory is the source.
  */
 export async function parentPackageDirectory(
   env: NodeJS.ProcessEnv = process.env,

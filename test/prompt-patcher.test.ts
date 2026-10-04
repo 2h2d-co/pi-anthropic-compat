@@ -4,10 +4,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   DefaultResourceLoader,
   SettingsManager,
-  getAgentDir,
   getPackageDir,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -33,17 +33,10 @@ type PatcherHandler = (
 
 const PROVIDER = "anthropic";
 const MODEL = "claude-fable-5-1";
-// The installed patcher is the one both live tests load. Resolve it before any test changes
-// PI_CODING_AGENT_DIR.
-const installedPatcher = join(
-  getAgentDir(),
-  "npm/node_modules/pi-system-prompt-patcher/extensions/index.ts",
+// The pinned development dependency is the patcher both live tests load.
+const pinnedPatcher = fileURLToPath(
+  new URL("../node_modules/pi-system-prompt-patcher/extensions/index.ts", import.meta.url),
 );
-const requiresPatcher = {
-  skip: existsSync(installedPatcher)
-    ? false
-    : "Install pi-system-prompt-patcher under Pi's global npm directory.",
-};
 
 test("retargets package paths without changing replacement text or source rules", () => {
   const from = resolve("synthetic/original-pi");
@@ -237,8 +230,8 @@ for (const [reference, describeSettings] of [
       { target: "Unrelated instruction", replacement: "Updated instruction" },
     ]);
 
-    await t.test("the installed patcher reads the isolated rules", requiresPatcher, async (t) => {
-      const handler = await loadInstalledPatcher(temporary);
+    await t.test("the pinned patcher reads the isolated rules", async (t) => {
+      const handler = await loadPinnedPatcher(temporary);
       const payload = {
         system: `Main documentation: ${to}/README.md\nUnrelated instruction`,
         messages: [{ role: "user", content: "unchanged" }],
@@ -335,13 +328,13 @@ test("isolation preserves missing settings and a configured provider's no-op beh
   assert.equal(existsSync(join(agent, ISOLATED_REPLACEMENT_FILE)), false);
 });
 
-// Load installed TypeScript through Pi so host imports use the same aliases as a real session.
-async function loadInstalledPatcher(temporary: string): Promise<PatcherHandler> {
+// Load the patcher's TypeScript through Pi so host imports use the same aliases as a real session.
+async function loadPinnedPatcher(temporary: string): Promise<PatcherHandler> {
   const loader = new DefaultResourceLoader({
     cwd: temporary,
     agentDir: join(temporary, "loader-agent"),
     settingsManager: SettingsManager.inMemory(),
-    additionalExtensionPaths: [installedPatcher],
+    additionalExtensionPaths: [pinnedPatcher],
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
@@ -350,8 +343,8 @@ async function loadInstalledPatcher(temporary: string): Promise<PatcherHandler> 
   await loader.reload();
   const loaded = loader.getExtensions();
   assert.deepEqual(loaded.errors, []);
-  const extension = loaded.extensions.find((candidate) => candidate.path === installedPatcher);
-  assert.ok(extension, "Pi loads the installed patcher.");
+  const extension = loaded.extensions.find((candidate) => candidate.path === pinnedPatcher);
+  assert.ok(extension, "Pi loads the pinned patcher.");
   const [handler] = extension.handlers.get("before_provider_request") ?? [];
   assert.ok(handler, "The patcher registers a before_provider_request handler.");
   return handler;

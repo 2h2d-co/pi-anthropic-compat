@@ -44,26 +44,17 @@ async function liveSession(
     JSON.stringify({ enabled: true, keepRecentTokens: options.keepRecentTokens ?? 1 }),
   );
   // The in-process runtime must use the repository dependency's metadata, not an inherited
-  // global package directory. `mise run test:live` binds PI_PACKAGE_DIR accordingly.
+  // package directory. `npm run test:live` removes an inherited PI_PACKAGE_DIR.
   const packageDir = getPackageDir();
   assert.equal(
     await realpath(packageDir),
     await realpath(join(repository, "node_modules/@earendil-works/pi-coding-agent")),
-    "Run the live tests through `mise run test:live` so PI_PACKAGE_DIR selects the repository Pi.",
+    "Run the live tests through `npm run test:live`, which removes an inherited PI_PACKAGE_DIR.",
   );
   const realAgentDir = getAgentDir();
-  const patcher = join(
-    realAgentDir,
-    "npm",
-    "node_modules",
-    "pi-system-prompt-patcher",
-    "extensions",
-    "index.ts",
-  );
-  assert.ok(
-    existsSync(patcher),
-    "Install the system-prompt patcher before running a live Anthropic test.",
-  );
+  // The patcher is a pinned development dependency; only its rules come from the user's agent.
+  const patcher = join(repository, "node_modules/pi-system-prompt-patcher/extensions/index.ts");
+  assert.ok(existsSync(patcher), "Run npm ci to install the system-prompt patcher.");
   // The patcher reads its settings from PI_CODING_AGENT_DIR on every request. Give it an
   // isolated copy of the effective global rules whose targets name this package directory.
   await isolatePromptPatcher({

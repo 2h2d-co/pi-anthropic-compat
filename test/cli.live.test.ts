@@ -93,10 +93,10 @@ for (const { modelId, keepRecentTokens } of scenarios) {
       // Drive each executable with its own RPC client rather than mixing installations.
       const { RpcClient } = await loadRpcClient(piRoot);
 
-      // Isolated agent state with the real Claude login and the required prompt patcher.
+      // Isolated agent state with the real Claude login and the pinned prompt patcher.
       const realAgentDir = getAgentDir();
-      const patcher = join(realAgentDir, "npm/node_modules/pi-system-prompt-patcher");
-      assert.ok(existsSync(patcher), "Install the system-prompt patcher before the live CLI test.");
+      const patcher = join(root, "node_modules/pi-system-prompt-patcher");
+      assert.ok(existsSync(patcher), "Run npm ci to install the system-prompt patcher.");
       const agent = join(temporary, "agent");
       await mkdir(agent);
       await symlink(join(realAgentDir, "auth.json"), join(agent, "auth.json"));
@@ -133,7 +133,6 @@ for (const { modelId, keepRecentTokens } of scenarios) {
         model: modelId,
         env: {
           PI_CODING_AGENT_DIR: agent,
-          PI_PACKAGE_DIR: piRoot,
           PI_TELEMETRY: "0",
         },
         args: [

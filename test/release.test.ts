@@ -8,6 +8,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("../", import.meta.url)));
+const liveOperation = "npm synthetic-npm run test:live";
 const candidate = "synthetic release archive";
 const digest = createHash("sha256").update(candidate).digest("hex");
 const files = readFileSync(join(root, ".github/npm-package-files"), "utf8")
@@ -26,11 +27,11 @@ for (const [liveStatus, description] of [
     const previousNpm = process.env["npm_execpath"];
     const calls: string[] = [];
     const archives: string[] = [];
-    const spawnError = Object.assign(new Error("spawn mise ENOENT"), { code: "ENOENT" });
+    const spawnError = Object.assign(new Error("spawn node ENOENT"), { code: "ENOENT" });
     let signed = false;
     process.argv = [process.execPath, join(root, "scripts/release.ts"), "0.0.3"];
     process.env["npm_execpath"] = "synthetic-npm";
-    // Intercept every child command. No real Git, npm, Mise, or provider calls occur.
+    // Intercept every child command. No real Git, npm, or provider calls occur.
     const mocked = t.mock.method(
       childProcess,
       "spawnSync",
@@ -77,23 +78,23 @@ for (const [liveStatus, description] of [
             stdout = JSON.stringify([
               { name: "pi-anthropic-compat", version: "0.0.3", filename, files },
             ]);
+          } else if (verb === "run") {
+            assert.deepEqual(args.slice(2), ["test:live"]);
+            assert.equal(cwd, root);
+            assert.equal(options.env?.["PI_PACKAGE_ARCHIVE"], archives[0]);
+            assert.equal(
+              readFileSync(String(options.env?.["PI_PACKAGE_ARCHIVE"]), "utf8"),
+              candidate,
+            );
+            if (liveStatus === "spawn-error") {
+              error = spawnError;
+              status = null;
+            } else {
+              status = liveStatus === "rebuild-mismatch" ? 0 : liveStatus;
+            }
           } else {
             assert.equal(verb, "version");
             assert.equal(cwd, root);
-          }
-        } else if (command === "mise") {
-          assert.deepEqual(args, ["run", "test:live"]);
-          assert.equal(options.cwd, root);
-          assert.equal(options.env?.["PI_PACKAGE_ARCHIVE"], archives[0]);
-          assert.equal(
-            readFileSync(String(options.env?.["PI_PACKAGE_ARCHIVE"]), "utf8"),
-            candidate,
-          );
-          if (liveStatus === "spawn-error") {
-            error = spawnError;
-            status = null;
-          } else {
-            status = liveStatus === "rebuild-mismatch" ? 0 : liveStatus;
           }
         } else throw new Error(`Unexpected child command: ${operation}`);
         return {
@@ -122,9 +123,11 @@ for (const [liveStatus, description] of [
       await assert.rejects(import(script.href), (error: unknown) => error === spawnError);
     } else if (liveStatus === "rebuild-mismatch") {
       await assert.rejects(import(script.href), /not reproducible/);
-    } else await assert.rejects(import(script.href), /mise run test:live exited with 1/);
+    } else {
+      await assert.rejects(import(script.href), /synthetic-npm run test:live exited with 1/);
+    }
 
-    assert.equal(calls.filter((call) => call === "mise run test:live").length, 1);
+    assert.equal(calls.filter((call) => call === liveOperation).length, 1);
     const liveSucceeded = liveStatus === 0 || liveStatus === "rebuild-mismatch";
     assert.equal(signed, liveSucceeded);
     assert.equal(calls.includes("git tag v0.0.3"), liveStatus === 0);
@@ -134,7 +137,7 @@ for (const [liveStatus, description] of [
       "Temporary candidates are cleaned up.",
     );
     if (liveStatus === 0) {
-      const liveIndex = calls.indexOf("mise run test:live");
+      const liveIndex = calls.indexOf(liveOperation);
       const commitIndex = calls.findIndex((call) => call.startsWith("git commit "));
       const rebuildIndex = calls.findLastIndex((call) => call.startsWith("git checkout-index "));
       assert.ok(liveIndex < commitIndex && commitIndex < rebuildIndex);
@@ -182,7 +185,7 @@ for (const [prerequisite, porcelain, branch, message] of [
     assert.ok(
       calls.every((call) => call.startsWith("git branch") || call.startsWith("git status")),
     );
-    assert.equal(calls.includes("mise run test:live"), false);
+    assert.equal(calls.includes(liveOperation), false);
   });
 }
 
