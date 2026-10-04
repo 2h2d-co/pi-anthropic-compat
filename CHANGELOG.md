@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- Require Pi 1.0.1 or newer. Restart Pi after upgrading its runtime.
+- Require Pi `>=1.0.1 <1.1.0`. Restart Pi after upgrading its runtime.
   If the last compaction kept recent messages, set Native tail tokens to `0`
   and compact the full conversation before upgrading Pi.
 

@@ -2,9 +2,10 @@
 
 Native Anthropic compatibility for Pi, starting with signed on-demand compaction.
 
-Requires **Pi 1.0.1 or newer** and Node.js 22.19 or newer. Releases are
-validated against Pi 1.0.1. The extension refuses to load on an older Pi,
-because Pi does not enforce the package's peer range when it installs packages.
+Requires Pi `>=1.0.1 <1.1.0` and Node.js 22.19 or newer. Releases are
+validated against Pi 1.0.1. The extension refuses to load on a Pi older than
+1.0.1, because Pi does not enforce the package's peer range when it installs
+packages.
 
 ## Install
 
