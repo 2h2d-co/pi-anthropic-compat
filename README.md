@@ -237,7 +237,7 @@ modes. `/compact <instructions>` supplies additional summary guidance.
 ```sh
 mise trust
 mise install
-mise run install
+mise run init
 mise run check
 pi -e .
 ```

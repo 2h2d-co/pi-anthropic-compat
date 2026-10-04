@@ -31,8 +31,8 @@ jobs:
           install_args: --locked
           cache: false
 
-      - name: Install dependencies
-        run: mise run install
+      - name: Install dependencies and Git hooks
+        run: mise run init
 
       - name: Audit dependencies
         run: mise exec -- npm audit
