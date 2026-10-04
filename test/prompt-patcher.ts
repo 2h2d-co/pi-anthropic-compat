@@ -1,55 +1,12 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { object } from "../extensions/anthropic-compat/json.ts";
 
 export const PATCHER_SETTINGS_FILE = "pi-system-prompt-patcher.json";
 export const ISOLATED_REPLACEMENT_FILE = "pi-system-prompt-patcher-replacements.json";
-// Names the Pi package directory that the global prompt-patcher rules describe. Live tests require
-// it because only the user's environment knows that installation; the repository never records it.
-export const PARENT_PACKAGE_DIR_VARIABLE = "PI_ANTHROPIC_PARENT_PACKAGE_DIR";
-export const MISSING_PARENT_PACKAGE_DIR =
-  `Set ${PARENT_PACKAGE_DIR_VARIABLE} to the Pi package directory that your global ` +
-  "prompt-patcher rules describe, or to an empty value when no rule names a Pi package path.";
-
-// Change only package-directory references in match targets, never replacement text.
-// Rules can also rewrite the package directory in pieces, such as its installation root and
-// the package path around a version segment. Another runtime's directory contains none of
-// those pieces, so they become one rule that rewrites that directory to the same result.
-export function retargetPackageDirectory(value: unknown, from: string, to: string) {
-  assert.ok(Array.isArray(value), "Prompt-patcher replacements must be an array.");
-  const source = `${resolve(from)}/`;
-  const destination = `${resolve(to)}/`;
-  const rules = value.map((item: unknown) => {
-    const rule = object(item);
-    const target = rule["target"];
-    const replacement = rule["replacement"];
-    assert.ok(typeof target === "string" && target.length > 0, "A match target is required.");
-    assert.ok(typeof replacement === "string", "Replacement text is required.");
-    return { rule, target, replacement };
-  });
-  if (source === destination) return rules.map(({ rule }) => ({ ...rule }));
-  // Only path fragments count as pieces: a general rule such as `pi` also
-  // rewrites text outside the directory and must stay a rule of its own.
-  const isPiece = (target: string) =>
-    target.startsWith("/") &&
-    target.endsWith("/") &&
-    !target.includes(source) &&
-    source.includes(target);
-  let rewritten = source;
-  for (const { target, replacement } of rules) {
-    if (isPiece(target)) rewritten = rewritten.replaceAll(target, replacement);
-  }
-  let composed = false;
-  return rules.flatMap(({ rule, target }) => {
-    if (!isPiece(target)) return [{ ...rule, target: target.replaceAll(source, destination) }];
-    if (composed) return [];
-    composed = true;
-    return [{ ...rule, target: destination, replacement: rewritten }];
-  });
-}
 
 // Mirrors pi-system-prompt-patcher: a model file overrides the provider file.
 export function selectReplacementFile(
@@ -80,8 +37,9 @@ export function resolveReplacementFile(configured: string, settingsPath: string)
 
 /**
  * Copies the effective replacement rules for one provider and model into an isolated agent
- * directory, retargets package-directory references in their match targets, and writes settings
- * that make the actual patcher read the copy. The source settings and rule files stay unchanged.
+ * directory unchanged, and writes settings that make the actual patcher read the copy. Rules that
+ * name Pi's package directory use the patcher's `{piPackageDir}` placeholder, so they match the
+ * Pi under test without rewriting. The source settings and rule files stay unchanged.
  * Returns the isolated rule path, or undefined when nothing applies to that provider and model.
  */
 export async function isolatePromptPatcher(options: {
@@ -89,8 +47,6 @@ export async function isolatePromptPatcher(options: {
   agentDir: string;
   provider: string;
   model: string;
-  from: string;
-  to: string;
 }): Promise<string | undefined> {
   const sourceSettings = join(options.sourceAgentDir, PATCHER_SETTINGS_FILE);
   if (!existsSync(sourceSettings)) return undefined;
@@ -103,14 +59,8 @@ export async function isolatePromptPatcher(options: {
     );
     return undefined;
   }
-  const rules: unknown = JSON.parse(
-    await readFile(resolveReplacementFile(configured, sourceSettings), "utf8"),
-  );
   const replacementPath = join(options.agentDir, ISOLATED_REPLACEMENT_FILE);
-  await writeFile(
-    replacementPath,
-    JSON.stringify(retargetPackageDirectory(rules, options.from, options.to)),
-  );
+  await copyFile(resolveReplacementFile(configured, sourceSettings), replacementPath);
   await writeFile(
     join(options.agentDir, PATCHER_SETTINGS_FILE),
     JSON.stringify({
@@ -118,34 +68,4 @@ export async function isolatePromptPatcher(options: {
     }),
   );
   return replacementPath;
-}
-
-/**
- * The package directory that global prompt-patcher rules describe, from
- * PI_ANTHROPIC_PARENT_PACKAGE_DIR expanded like Pi's runtime. An empty value supplies no known
- * source, so targets remain unchanged and the patcher detects any mismatch. A missing value is an
- * error rather than a guess.
- */
-export async function parentPackageDirectory(
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<string | undefined> {
-  const captured = env[PARENT_PACKAGE_DIR_VARIABLE];
-  if (captured === undefined) throw new Error(MISSING_PARENT_PACKAGE_DIR);
-  if (captured === "") return undefined;
-  const directory = resolve(expandTilde(captured));
-  const manifest = join(directory, "package.json");
-  assert.ok(existsSync(manifest), `${directory} is not a Pi package directory.`);
-  assert.equal(
-    object(JSON.parse(await readFile(manifest, "utf8")))["name"],
-    "@earendil-works/pi-coding-agent",
-    `${directory} is not a Pi package directory.`,
-  );
-  return directory;
-}
-
-// Mirrors Pi's PI_PACKAGE_DIR normalization for `~` and `~/`.
-function expandTilde(path: string): string {
-  if (path === "~") return homedir();
-  if (path.startsWith("~/")) return join(homedir(), path.slice(2));
-  return path;
 }

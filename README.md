@@ -296,22 +296,16 @@ Each CLI subprocess resolves its own package directory, and the SDK tests use
 the repository Pi. Both test suites resolve the
 global prompt-patcher rules the way the patcher does: the model-specific file
 for the model under test wins over the provider file, and relative, absolute,
-and `~/` references are all accepted. They copy those rules into the isolated
-agent directory, rewrite package-directory references in the match targets for
-the runtime under test, and write isolated patcher settings that point at the
-copy. Rules that rewrite the package directory in path pieces, such as its
-installation root and the package path around a version segment, become one rule
-for the runtime under test with the same result. A path piece is a target that
-starts and ends with `/`; other rules stay as they are. Replacement text and global
-configuration remain unchanged.
+and `~/` references are all accepted. They copy those rules unchanged into the
+isolated agent directory and write isolated patcher settings that point at the
+copy. Global configuration remains unchanged.
 
-Live tests require `PI_ANTHROPIC_PARENT_PACKAGE_DIR`, the Pi package directory
-that your global rules describe. Only your environment knows that installation,
-so set the variable in your own shell or user configuration, never in this
-repository. The tests verify it is a Pi package. Set it to an empty value when
-no rule names a Pi package path; targets then stay unchanged, and the patcher
-reports any target missing from the prompt. `npm run test:live` stops before
-any test when the variable is missing.
+Rules that rewrite Pi's package directory must use the patcher's
+`{piPackageDir}` placeholder rather than a fixed installation path. The
+placeholder resolves to the Pi under test, so the same rule matches both your
+installed Pi and the repository's Pi dependency. A rule that names a fixed
+installation path does not match the repository Pi, and the patcher aborts the
+turn.
 
 `npm run test:live` is the complete release validation. `scripts/test-live.ts`
 runs the packaged settings tests offline, then the SDK and CLI tests against

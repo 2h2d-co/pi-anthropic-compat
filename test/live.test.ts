@@ -22,7 +22,7 @@ import extension from "../extensions/index.ts";
 import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
 import { activeCheckpoint } from "../extensions/anthropic-compat/runtime.ts";
 import { messageHash } from "../extensions/anthropic-compat/tail.ts";
-import { isolatePromptPatcher, parentPackageDirectory } from "./prompt-patcher.ts";
+import { isolatePromptPatcher } from "./prompt-patcher.ts";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -56,14 +56,12 @@ async function liveSession(
   const patcher = join(repository, "node_modules/pi-system-prompt-patcher/extensions/index.ts");
   assert.ok(existsSync(patcher), "Run npm ci to install the system-prompt patcher.");
   // The patcher reads its settings from PI_CODING_AGENT_DIR on every request. Give it an
-  // isolated copy of the effective global rules whose targets name this package directory.
+  // isolated copy of the effective global rules.
   await isolatePromptPatcher({
     sourceAgentDir: realAgentDir,
     agentDir,
     provider: "anthropic",
     model: modelId,
-    from: (await parentPackageDirectory()) ?? packageDir,
-    to: packageDir,
   });
   const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
   process.env["PI_CODING_AGENT_DIR"] = agentDir;

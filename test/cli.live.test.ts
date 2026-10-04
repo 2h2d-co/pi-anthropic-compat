@@ -15,7 +15,7 @@ import { object } from "../extensions/anthropic-compat/json.ts";
 import { CHECKPOINT_TYPE } from "../extensions/anthropic-compat/protocol.ts";
 import { REQUEST_TYPE } from "../extensions/anthropic-compat/tail.ts";
 import { archiveEntries, packageArchive } from "./package-archive.ts";
-import { isolatePromptPatcher, parentPackageDirectory } from "./prompt-patcher.ts";
+import { isolatePromptPatcher } from "./prompt-patcher.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -104,15 +104,13 @@ for (const { modelId, keepRecentTokens } of scenarios) {
       if (existsSync(join(realAgentDir, "APPEND_SYSTEM.md"))) {
         await copyFile(join(realAgentDir, "APPEND_SYSTEM.md"), join(agent, "APPEND_SYSTEM.md"));
       }
-      // The effective global rules describe the parent's Pi package directory. Copy them for this
-      // provider and model, then point the copied targets at the selected executable's package.
+      // Copy the effective global rules for this provider and model. Path rules use the patcher's
+      // placeholders, so they match the selected executable's package directory unchanged.
       await isolatePromptPatcher({
         sourceAgentDir: realAgentDir,
         agentDir: agent,
         provider: "anthropic",
         model: modelId,
-        from: (await parentPackageDirectory()) ?? piRoot,
-        to: piRoot,
       });
       await writeFile(
         join(agent, "settings.json"),
