@@ -56,6 +56,8 @@ if (process.env["PI_ANTHROPIC_CLI_BASELINE_ONLY"] !== "1") {
     { modelId: "claude-opus-5-5", keepRecentTokens: 1 },
     { modelId: "claude-sonnet-5-5", keepRecentTokens: 0 },
     { modelId: "claude-sonnet-5-5", keepRecentTokens: 1 },
+    { modelId: "claude-haiku-5-5", keepRecentTokens: 0 },
+    { modelId: "claude-haiku-5-5", keepRecentTokens: 1 },
   );
 }
 for (const { modelId, keepRecentTokens } of scenarios) {
@@ -133,23 +135,7 @@ for (const { modelId, keepRecentTokens } of scenarios) {
           PI_CODING_AGENT_DIR: agent,
           PI_TELEMETRY: "0",
         },
-        args: [
-          "--no-skills",
-          "--no-prompt-templates",
-          "--no-context-files",
-          // Keep the built-in read tool: tool declarations and a tool-call/result pair must
-          // survive the summary request, signed replay, and resume.
-          "--tools",
-          "read",
-          "--thinking",
-          "low",
-          "--session",
-          sessionFile,
-          "-e",
-          packageRoot,
-          "-e",
-          patcher,
-        ],
+        args: ["--thinking", "low", "--session", sessionFile, "-e", packageRoot, "-e", patcher],
       };
       // Check the same package-directory selection used for the actual RPC session.
       const versionEnv: NodeJS.ProcessEnv = { ...process.env, ...clientOptions.env };

@@ -9,6 +9,7 @@ export const TEMPLATE_TYPE = "pi-anthropic-compat-template";
 export const BOUNDARY_TYPE = "pi-anthropic-compat-boundary";
 
 const MODELS = new Set([
+  "claude-haiku-5-5",
   "claude-fable-5-1",
   "claude-fable-5",
   "claude-mythos-5-1",

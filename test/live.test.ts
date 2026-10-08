@@ -113,9 +113,6 @@ async function liveSession(
     cwd: root,
     agentDir: realAgentDir,
     settingsManager: settings,
-    noSkills: true,
-    noPromptTemplates: true,
-    noThemes: true,
     additionalExtensionPaths: [patcher],
     extensionFactories: [
       extension,
@@ -140,9 +137,7 @@ async function liveSession(
     sessionManager: manager,
     settingsManager: settings,
     resourceLoader: loader,
-    ...(options.customTools
-      ? { noTools: "builtin" as const, customTools: options.customTools }
-      : { noTools: "all" as const }),
+    ...(options.customTools ? { customTools: options.customTools } : {}),
   });
   t.after(() => session.dispose());
   await session.bindExtensions({});
@@ -152,7 +147,12 @@ async function liveSession(
   return { session, manager, model, requests, send, continuation: () => continuation };
 }
 
-for (const modelId of ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"]) {
+for (const modelId of [
+  "claude-fable-5-1",
+  "claude-opus-5-5",
+  "claude-sonnet-5-5",
+  "claude-haiku-5-5",
+]) {
   test(
     `live ${modelId} low-effort retained thinking with enforced positive and negative controls`,
     {
@@ -395,7 +395,8 @@ test(
       customTools: [lookup, recall],
       keepRecentTokens: 0,
     });
-    session.setActiveToolsByName([lookup.name]);
+    const initialToolNames = session.getActiveToolNames().filter((name) => name !== recall.name);
+    session.setActiveToolsByName(initialToolNames);
     await session.prompt(
       "Remember these synthetic project facts: project Lantern, port 4317. Reply with only OK. Do not use tools.",
     );
@@ -403,9 +404,9 @@ test(
     assert.ok(first && !first["compaction"]);
     const initialTools = first["tools"];
 
-    // Pi 1.0.1 defines a tool added after the first request inline, in a system message,
+    // Pi defines a tool added after the first request inline, in a system message,
     // and keeps the request-level tool list unchanged.
-    session.setActiveToolsByName([lookup.name, recall.name]);
+    session.setActiveToolsByName([...initialToolNames, recall.name]);
     await session.prompt("Reply with only OK. Do not use tools.");
     const added = requests.at(-1);
     assert.ok(added && !added["compaction"]);

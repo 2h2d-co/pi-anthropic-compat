@@ -2,9 +2,9 @@
 
 Native Anthropic compatibility for Pi, starting with signed on-demand compaction.
 
-Requires Pi `>=1.0.1 <1.1.0` and Node.js 22.19 or newer. Releases are
-validated against Pi 1.0.1. The extension refuses to load on a Pi older than
-1.0.1, because Pi does not enforce the package's peer range when it installs
+Requires Pi `>=1.1.0 <1.2.0` and Node.js 22.19 or newer. Releases are
+validated against Pi 1.1.0. The extension refuses to load on a Pi older than
+1.1.0, because Pi does not enforce the package's peer range when it installs
 packages.
 
 ## Install
@@ -112,6 +112,7 @@ summaries still replay until another Pi compaction replaces them.
 
 This version supports the direct Claude API and these documented model IDs:
 
+- `claude-haiku-5-5`
 - `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-sonnet-4-6`
 - `claude-opus-5-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`
 - `claude-fable-5-1`, `claude-fable-5`
@@ -258,7 +259,7 @@ effort instructions, changed system/tools/content, and cold session resume.
 their test processes, so in-process tests read the repository Pi's own metadata.
 Ordinary `pi` launches are unaffected.
 
-Live tests make billed Fable 5.1, Opus 5.5, and Sonnet 5.5 requests at `low` effort:
+Live tests make billed Fable 5.1, Opus 5.5, Sonnet 5.5, and Haiku 5.5 requests at `low` effort:
 
 ```sh
 npm run test:live
@@ -289,8 +290,11 @@ extension withholds Pi's summary message once a checkpoint exists. The test
 requires the selected Pi to match the repository's Pi development dependency.
 `PI_ANTHROPIC_CLI_PATH` selects another `cli.js` to test; the default is the
 repository's Pi dependency.
-Fable tests retain recent messages. Opus 5.5 and Sonnet 5.5 tests cover both
+Fable tests retain recent messages. Opus 5.5, Sonnet 5.5, and Haiku 5.5 tests cover both
 full-history and retained-message compaction. The default test suite and CI skip live tests.
+Anthropic live runs keep normal tools, extensions, capabilities, and resource
+loading enabled. Test state and prompt-patcher rules are isolated without
+restricting the available tools.
 
 Each CLI subprocess resolves its own package directory, and the SDK tests use
 the repository Pi. Both test suites resolve the

@@ -53,7 +53,7 @@ async function setup(
     persistent?: boolean;
     keepRecentTokens?: number;
     managed?: boolean;
-    modelId?: "claude-opus-5-5";
+    modelId?: "claude-opus-5-5" | "claude-haiku-5-5";
     /** Replace the serialized system prompt at the payload boundary. Default: true. */
     patchSystem?: boolean;
     /** Activate Pi codemode in this mode next to a direct and a model-only tool. */
@@ -278,33 +278,35 @@ test("real Pi session compacts, replays exactly one native block, and retains or
   assert.deepEqual(objects(repeated["messages"])[0], { role: "assistant", content: [block] });
 });
 
-for (const keepRecentTokens of [0, 1]) {
-  test(`Opus 5.5 compacts and replays with keepRecentTokens=${keepRecentTokens}`, async (t) => {
-    const { session, manager, requests } = await setup(t, {
-      modelId: "claude-opus-5-5",
-      managed: true,
-      keepRecentTokens,
+for (const modelId of ["claude-opus-5-5", "claude-haiku-5-5"] as const) {
+  for (const keepRecentTokens of [0, 1]) {
+    test(`${modelId} compacts and replays with keepRecentTokens=${keepRecentTokens}`, async (t) => {
+      const { session, manager, requests } = await setup(t, {
+        modelId,
+        managed: true,
+        keepRecentTokens,
+      });
+      await session.prompt("Remember the synthetic project Lantern.");
+      await session.compact();
+      const saved = activeCheckpoint(manager.getBranch());
+      assert.equal(saved?.model, modelId);
+      assert.equal(Boolean(saved?.retained), keepRecentTokens > 0);
+      await session.prompt("Continue.");
+      const latest = requests.at(-1);
+      assert.ok(latest);
+      assert.equal(latest["model"], modelId);
+      assert.deepEqual(objects(latest["messages"])[0], {
+        role: "assistant",
+        content: [block],
+      });
+      if (saved?.retained) {
+        assert.deepEqual(
+          objects(latest["messages"]).slice(1, 1 + saved.retained.messages.length),
+          saved.retained.messages,
+        );
+      }
     });
-    await session.prompt("Remember the synthetic project Lantern.");
-    await session.compact();
-    const saved = activeCheckpoint(manager.getBranch());
-    assert.equal(saved?.model, "claude-opus-5-5");
-    assert.equal(Boolean(saved?.retained), keepRecentTokens > 0);
-    await session.prompt("Continue.");
-    const latest = requests.at(-1);
-    assert.ok(latest);
-    assert.equal(latest["model"], "claude-opus-5-5");
-    assert.deepEqual(objects(latest["messages"])[0], {
-      role: "assistant",
-      content: [block],
-    });
-    if (saved?.retained) {
-      assert.deepEqual(
-        objects(latest["messages"]).slice(1, 1 + saved.retained.messages.length),
-        saved.retained.messages,
-      );
-    }
-  });
+  }
 }
 
 test("native replay and manual compaction survive extension reload and branch navigation", async (t) => {
