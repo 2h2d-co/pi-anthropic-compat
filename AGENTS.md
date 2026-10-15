@@ -5,7 +5,7 @@
 - Keep `extensions/index.ts` thin. Compatibility behavior belongs in focused modules under `extensions/anthropic-compat/`.
 - Native compaction must fail closed. Do not silently substitute a plain-text summary after native failure.
 - Preserve exact native blocks and signatures. Never print credentials, signed block contents, or raw provider error bodies.
-- Live tests report every extension error or warning notice, extension error, and failed response as a test diagnostic, even when the test passes. Summarize failed responses by stop reason, HTTP status, and error category only.
+- Live tests report every error they meet as a test diagnostic, even when they pass: extension error and warning notices, extension errors, and failed responses. Use `test/error-log.ts`. Summarize failed responses by stop reason, HTTP status, and error category; never print provider error text or credentials.
 - Keep final provider-payload transforms effective, including the Anthropic system-prompt patcher.
 - Anthropic live tests keep normal tool, capability, extension, and resource loading enabled. Never restrict tools or disable resources to simplify the harness. Preserve the effective prompt-patcher rules in isolated test state.
 - Keep-tail compaction must use verified earlier native requests and preserve the retained messages exactly. Never infer native boundaries from displayed turn counts or silently fall back to full-history compaction. The one fallback is a session whose strict tool set Anthropic rejects: compact the full history and notify the user.

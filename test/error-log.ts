@@ -1,21 +1,40 @@
 import type { TestContext } from "node:test";
 
+// Words that classify a failed response without quoting it.
 const CATEGORIES = [
+  "abort",
+  "overloaded",
+  "rate limit",
+  "usage limit",
+  "quota",
+  "credit",
+  "authentication",
+  "unauthorized",
+  "forbidden",
+  "OAuth",
+  "timeout",
+  "network",
+  "websocket",
+  "context",
   "max_tokens",
   "thinking",
   "tool",
-  "OAuth",
-  "authentication",
-  "rate limit",
-  "credit",
-  "overloaded",
-  "context",
   "model",
   "beta",
 ];
 
+// Bearer values, API keys, JWTs, and other long opaque tokens.
+const CREDENTIAL =
+  /Bearer\s+\S+|\bsk-[\w-]{16,}|\beyJ[\w-]+\.[\w-]+\.[\w-]+|[A-Za-z0-9+_-]{40,}={0,2}/g;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+/** Remove credential-like values and bound the length of text printed in a diagnostic. */
+export function redact(text: string): string {
+  const redacted = text.replace(CREDENTIAL, "[redacted]");
+  return redacted.length > 1000 ? `${redacted.slice(0, 1000)}…` : redacted;
 }
 
 /**
@@ -36,18 +55,18 @@ export function describeFailure(message: unknown): string {
 
 /**
  * Report every error a live test meets as a test diagnostic, whether or not the test fails, so a
- * one-off failure keeps its cause. Extension notices and extension errors are printed as they are:
- * the extensions never put provider bodies in them. Failed responses are summarized.
+ * one-off failure keeps its cause. Extension notices and extension errors are printed with
+ * credential-like values removed. Failed responses are only summarized.
  */
 export function errorLog(t: TestContext) {
   const log = {
     notice: (message: string, level: string | undefined): void => {
       if (level === "error" || level === "warning") {
-        t.diagnostic(`Extension ${level}: ${message}`);
+        t.diagnostic(`Extension ${level}: ${redact(message)}`);
       }
     },
     extensionError: (event: string, error: string): void => {
-      t.diagnostic(`Extension error in ${event}: ${error}`);
+      t.diagnostic(`Extension error in ${event}: ${redact(error)}`);
     },
     response: (message: unknown): void => {
       if (!isRecord(message) || message["role"] !== "assistant") return;
@@ -72,6 +91,17 @@ export function errorLog(t: TestContext) {
       } else if (event["type"] === "message_end") {
         log.response(event["message"]);
       }
+    },
+    /**
+     * Read a print or JSON mode run. Pi drops extension notices in these modes, prints extension
+     * errors to stderr, and saves failed responses in the session. Other stderr lines can quote
+     * provider errors, so only extension error lines are printed.
+     */
+    printRun: (stderr: string, messages: readonly unknown[] = []): void => {
+      for (const line of stderr.split("\n")) {
+        if (line.startsWith("Extension error")) t.diagnostic(redact(line));
+      }
+      for (const message of messages) log.response(message);
     },
   };
   return log;
