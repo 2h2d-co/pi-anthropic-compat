@@ -13,9 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - Full-history compaction no longer fails with "Too many strict tools" or another strict
-  tool limit while Pi's turns succeed through its non-strict retry. It retries once with
-  `strict: "prefer"` tools non-strict, as Pi does. Retained-message compaction cancels with a
-  message that names full-history compaction instead.
+  tool limit while Pi's turns succeed through its non-strict retry. It sends
+  `strict: "prefer"` tools non-strict after such a turn and retries a rejected summary request
+  once without them, as Pi does. With **Native tail tokens** set, these sessions compact the full
+  history and show a warning, because retained messages cannot replay behind the changed tools.
 - Record the system instructions, tools, and request boundary only for the request Anthropic
   accepted. A turn Pi retried no longer records the rejected attempt as well.
 

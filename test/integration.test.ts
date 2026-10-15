@@ -23,12 +23,7 @@ import {
 } from "../extensions/anthropic-compat/runtime.ts";
 import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
 import { TEMPLATE_TYPE } from "../extensions/anthropic-compat/protocol.ts";
-import {
-  REQUEST_TYPE,
-  bindingTemplate,
-  fingerprint,
-  requestBoundary,
-} from "../extensions/anthropic-compat/tail.ts";
+import { REQUEST_TYPE, bindingTemplate, fingerprint } from "../extensions/anthropic-compat/tail.ts";
 import { block, model, summaryResponse, textResponse } from "./fixtures.ts";
 import { SESSION_SETTINGS_TYPE } from "../extensions/anthropic-compat/settings.ts";
 import { DEFAULT_CONFIG } from "../extensions/anthropic-compat/config.ts";
@@ -88,8 +83,11 @@ async function setup(
     patchSystem?: boolean;
     /** Activate Pi codemode in this mode next to a direct and a model-only tool. */
     codemode?: "on" | "only";
-    /** Offer a strict-preferred tool and reject every request that sends it strict. */
-    strictLimit?: boolean;
+    /**
+     * Offer a strict-preferred tool and reject requests that send it strict: every request, or
+     * only summary requests.
+     */
+    strictLimit?: boolean | "compaction";
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "anthropic-integration-"));
@@ -128,7 +126,12 @@ async function setup(
     }
     const body = object(await request.json());
     requests.push(body);
-    if (options.strictLimit && hasStrictTool(body)) return strictToolLimit();
+    if (
+      hasStrictTool(body) &&
+      (options.strictLimit === true || (options.strictLimit === "compaction" && body["compaction"]))
+    ) {
+      return strictToolLimit();
+    }
     if (body["compaction"]) {
       onSummary?.();
       if (options.fail)
@@ -426,46 +429,52 @@ test("a turn Pi retries without strict tools records only the accepted request",
   );
 });
 
-test("full-history compaction retries once with preferred strict tools non-strict", async (t) => {
-  const { session, manager, requests } = await setup(t, {
-    modelId: "claude-opus-5-5",
-    managed: true,
-    strictLimit: true,
+for (const keepRecentTokens of [0, 1]) {
+  test(`compaction after Pi's strict retry sends tools non-strict and summarizes the full history (keepRecentTokens=${keepRecentTokens})`, async (t) => {
+    const { session, manager, requests } = await setup(t, {
+      modelId: "claude-opus-5-5",
+      managed: true,
+      strictLimit: true,
+      keepRecentTokens,
+    });
+    await session.prompt("Remember the synthetic project Lantern.");
+    const result = await session.compact();
+    assert.equal(result.summary, block["content"]);
+    // The latest turn needed Pi's retry, so the summary request starts non-strict.
+    const summaries = requests.filter((request) => request["compaction"]);
+    assert.deepEqual(summaries.map(hasStrictTool), [false]);
+    const saved = activeCheckpoint(manager.getBranch());
+    assert.equal(saved?.model, "claude-opus-5-5");
+    assert.equal(saved?.retained, undefined);
+    await session.prompt("Continue.");
+    const latest = requests.at(-1);
+    assert.ok(latest);
+    assert.equal(hasStrictTool(latest), false);
+    assert.deepEqual(objects(latest["messages"])[0], { role: "assistant", content: [block] });
   });
-  await session.prompt("Remember the synthetic project Lantern.");
-  const result = await session.compact();
-  assert.equal(result.summary, block["content"]);
-  const summaries = requests.filter((request) => request["compaction"]);
-  assert.deepEqual(summaries.map(hasStrictTool), [true, false]);
-  assert.equal(activeCheckpoint(manager.getBranch())?.model, "claude-opus-5-5");
-  await session.prompt("Continue.");
-  const latest = requests.at(-1);
-  assert.ok(latest);
-  assert.equal(hasStrictTool(latest), false);
-  assert.deepEqual(objects(latest["messages"])[0], { role: "assistant", content: [block] });
-});
 
-test("retained-message compaction cancels when Anthropic rejects the strict tool set", async (t) => {
-  const { session, manager, requests } = await setup(t, {
-    modelId: "claude-opus-5-5",
-    managed: true,
-    strictLimit: true,
-    keepRecentTokens: 1,
+  test(`a summary request over the strict limit retries non-strict over the full history (keepRecentTokens=${keepRecentTokens})`, async (t) => {
+    const { session, manager, requests } = await setup(t, {
+      modelId: "claude-opus-5-5",
+      managed: true,
+      strictLimit: "compaction",
+      keepRecentTokens,
+    });
+    await session.prompt("Remember the synthetic project Lantern.");
+    const result = await session.compact();
+    assert.equal(result.summary, block["content"]);
+    const summaries = requests.filter((request) => request["compaction"]);
+    assert.deepEqual(summaries.map(hasStrictTool), [true, false]);
+    // The retry summarizes every message, including the range retention would have kept.
+    const [first, retry] = summaries.map((request) => objects(request["messages"]).length);
+    assert.ok(first !== undefined && retry !== undefined);
+    if (keepRecentTokens > 0) assert.ok(first < retry);
+    else assert.equal(first, retry);
+    const saved = activeCheckpoint(manager.getBranch());
+    assert.equal(saved?.model, "claude-opus-5-5");
+    assert.equal(saved?.retained, undefined);
   });
-  await session.prompt("Remember the synthetic project Lantern.");
-  // Earlier versions also recorded the rejected strict request as a boundary.
-  const user = manager
-    .getBranch()
-    .find((entry) => entry.type === "message" && entry.message.role === "user");
-  const rejected = requests[0];
-  assert.ok(user && rejected && hasStrictTool(rejected));
-  manager.appendCustomEntry(REQUEST_TYPE, requestBoundary(rejected, user.id));
-  const leaf = manager.getLeafId();
-  await assert.rejects(session.compact(), /cancelled/i);
-  assert.deepEqual(requests.filter((request) => request["compaction"]).map(hasStrictTool), [true]);
-  assert.equal(manager.getLeafId(), leaf);
-  assert.equal(activeCheckpoint(manager.getBranch()), undefined);
-});
+}
 
 test("Pi automatic threshold invokes native compaction", async (t) => {
   const { session, manager, requests } = await setup(t, { automatic: true });

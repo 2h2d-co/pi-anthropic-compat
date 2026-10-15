@@ -188,6 +188,22 @@ export function activeTemplate(
   return undefined;
 }
 
+/**
+ * Whether Pi had to retry the branch's latest response from this model with `strict: "prefer"`
+ * tools non-strict after Anthropic rejected the strict tool set.
+ */
+export function strictToolsRejected(branch: readonly SessionEntry[], model: string): boolean {
+  for (let index = branch.length - 1; index >= 0; index--) {
+    const entry = branch[index];
+    if (entry?.type !== "message" || entry.message.role !== "assistant") continue;
+    if (entry.message.model !== model) continue;
+    return (entry.message.diagnostics ?? []).some(
+      (diagnostic) => diagnostic.type === "anthropic_strict_tools_fallback",
+    );
+  }
+  return false;
+}
+
 export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
   let context: ExtensionContext | undefined;
   let config: Config | undefined;
@@ -362,11 +378,16 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
         }
         return { request, payload };
       };
-      let { request: whole, payload: wholePayload } = await serialize(false);
+      // After Anthropic rejects the strict tool set, Pi sends each turn non-strict. Retained
+      // messages replay only behind the tools they were answered with, and Pi sends the strict
+      // set first on every later turn, so such sessions compact the full history instead.
+      const rejectedStrict = strictToolsRejected(branch, model.id);
+      let { request: whole, payload: wholePayload } = await serialize(rejectedStrict);
       const keepRecentTokens = configuration(ctx).keepRecentTokens;
       const managedEffort = model.compat?.supportsMidConvoEffort === true;
-      const selection =
-        keepRecentTokens > 0
+      let fullHistoryFallback = keepRecentTokens > 0 && rejectedStrict;
+      let selection =
+        keepRecentTokens > 0 && !rejectedStrict
           ? selectTail(branch, leaf, wholePayload, keepRecentTokens, managedEffort)
           : undefined;
       let retained: RetainedHistory | undefined;
@@ -414,19 +435,17 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
         raw = await summarize();
       } catch (error) {
         if (!(error instanceof StrictToolLimitError)) throw error;
-        // Retained messages replay only behind the tool set they were answered with, and Pi
-        // sends the strict set first on every later turn.
-        if (selection) {
-          throw new Error(
-            "Anthropic rejects this session's strict tool set, so retained-message compaction cannot run. Set Native tail tokens to 0 for full-history compaction. History was preserved.",
-            { cause: error },
-          );
-        }
-        // Follow Pi: retry once with preferred strict tools non-strict.
+        // Follow Pi: retry once with preferred strict tools non-strict. Retained messages
+        // cannot follow the changed tools, so the retry summarizes the full history.
         const downgraded = await serialize(true);
         if (JSON.stringify(downgraded.payload) === JSON.stringify(wholePayload)) throw error;
         whole = downgraded.request;
         wholePayload = downgraded.payload;
+        if (selection) {
+          selection = undefined;
+          retained = undefined;
+          fullHistoryFallback = true;
+        }
         raw = await summarize();
       }
       const result = parseSummary(raw, model);
@@ -458,6 +477,12 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
       }
       // Full-history mode needs an empty boundary. Keep-tail mode points to the
       // original first retained entry. Neither mode deletes historical entries.
+      if (fullHistoryFallback) {
+        ctx.ui.notify(
+          "Anthropic rejects this session's strict tool set, so native compaction summarized the full history instead of retaining recent messages.",
+          "warning",
+        );
+      }
       if (!selection) pi.appendEntry(BOUNDARY_TYPE, { version: 1 });
       const boundary = selection?.firstKeptEntryId ?? ctx.sessionManager.getLeafId();
       if (!boundary) throw new Error("Could not record the compaction boundary.");

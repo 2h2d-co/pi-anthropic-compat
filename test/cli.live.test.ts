@@ -58,8 +58,10 @@ const scenarios = [
   { modelId: "claude-haiku-5-5", keepRecentTokens: 0, strictLimit: false },
   { modelId: "claude-haiku-5-5", keepRecentTokens: 1, strictLimit: false },
   // Pi's strict built-in tools plus these exceed Anthropic's limit of 20 strict tools, so Pi
-  // retries every turn with preferred strict tools non-strict, and compaction must follow.
+  // retries every turn with preferred strict tools non-strict, and compaction must follow. Such
+  // sessions compact the full history even when retention is configured.
   { modelId: "claude-sonnet-5-5", keepRecentTokens: 0, strictLimit: true },
+  { modelId: "claude-sonnet-5-5", keepRecentTokens: 1, strictLimit: true },
 ];
 const STRICT_FIXTURE_TOOLS = 21;
 const STRICT_FIXTURE = `export default function (pi) {
@@ -251,7 +253,10 @@ for (const { modelId, keepRecentTokens, strictLimit } of scenarios) {
       assert.ok(checkpoint?.type === "compaction");
       assert.equal(object(checkpoint.details)["type"], CHECKPOINT_TYPE);
       assert.equal(object(checkpoint.details)["model"], modelId);
-      assert.equal(Boolean(object(checkpoint.details)["retained"]), keepRecentTokens > 0);
+      assert.equal(
+        Boolean(object(checkpoint.details)["retained"]),
+        keepRecentTokens > 0 && !strictLimit,
+      );
       assert.ok(checkpoint.systemMessage, "Pi 0.86 records the prompt snapshot on the entry.");
       await turn("Reply with only the port number from the project facts.", /4317/);
       await client.stop();

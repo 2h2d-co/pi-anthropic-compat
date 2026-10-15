@@ -50,11 +50,12 @@ Pi's separate setting with the same name does not control the native boundary.
 Anthropic rejects a request whose strict tools exceed its limits, such as more
 than 20 strict tools. Pi then retries the turn once with `strict: "prefer"` tools
 non-strict. The extension records only the request Anthropic accepted.
-Full-history compaction follows Pi: when Anthropic rejects the summary request
-for the same reason, it retries once with those tools non-strict. Retained-message
-compaction cancels instead, because Pi sends the strict tool set first on every
-later turn and retained history replays only behind the tools it was answered
-with. Use full-history compaction in such sessions.
+Compaction follows Pi. After a turn needed that retry, the summary request sends
+those tools non-strict. When Anthropic rejects a summary request for the same
+reason, the extension retries it once with those tools non-strict. Such sessions
+compact the full history even when **Native tail tokens** is set, and a warning
+says so. Retained history replays only behind the tools it was answered with, and
+Pi sends the strict tool set first on every later turn.
 
 ### Retaining recent messages
 
@@ -72,6 +73,7 @@ If no recorded boundary satisfies the target, compaction cancels without a
 summary request. Run more Anthropic turns or reduce Native tail tokens.
 Existing sessions need an ordinary turn with this extension version to record
 a boundary. The extension never silently substitutes full-history compaction.
+The only substitution is the case under Strict tool limits, which shows a warning.
 
 Retained history requires unchanged model, system instructions, tools, and
 earlier messages. Incompatible changes stop replay before transmission.
