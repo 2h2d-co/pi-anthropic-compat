@@ -331,6 +331,10 @@ turn.
 runs the packaged settings tests offline, then the SDK and CLI tests against
 the Pi development dependency. Live test files run sequentially to limit
 concurrent requests against the same account.
+Every live test reports each extension error or warning notice, extension
+error, and failed response as a test diagnostic, whether the test passes or
+fails. Failed responses show only their stop reason, HTTP status, and error
+category, never the provider error text.
 Set `PI_PACKAGE_ARCHIVE` to test a prepared archive instead of packing the
 working directory. A relative path resolves from the current working
 directory, which is the repository root under `npm run test:live`. All CLI runs

@@ -22,6 +22,7 @@ import extension from "../extensions/index.ts";
 import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
 import { activeCheckpoint } from "../extensions/anthropic-compat/runtime.ts";
 import { messageHash } from "../extensions/anthropic-compat/tail.ts";
+import { errorLog } from "./error-log.ts";
 import { isolatePromptPatcher } from "./prompt-patcher.ts";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -140,7 +141,22 @@ async function liveSession(
     ...(options.customTools ? { customTools: options.customTools } : {}),
   });
   t.after(() => session.dispose());
-  await session.bindExtensions({});
+  const errors = errorLog(t);
+  session.subscribe((event) => {
+    if (event.type === "message_end") errors.response(event.message);
+  });
+  await session.bindExtensions({
+    // Replace only notify in Pi's no-op UI, so extension notices reach the test log.
+    uiContext: {
+      ...session.extensionRunner.getUIContext(),
+      notify: (message, level) => {
+        errors.notice(message, level);
+      },
+    },
+    onError: (error) => {
+      errors.extensionError(error.event, error.error);
+    },
+  });
   if (options.codemode) {
     session.setActiveToolsByName([...session.getActiveToolNames(), "codemode"]);
   }
@@ -172,30 +188,6 @@ for (const modelId of [
         "Remember these six synthetic project facts: project Lantern, language TypeScript, port 4317, storage SQLite, constraint no network access, next task implement /health. Then solve this verification problem carefully: find the smallest positive integer n such that n mod 17 = 12, n mod 19 = 8, n mod 23 = 14, and n mod 29 = 7. Check all four congruences before answering. Reply with n and the four checked remainders. Do not use tools.",
       );
       const first = session.messages.at(-1);
-      if (first?.role === "assistant" && first.stopReason !== "stop") {
-        const error = first.errorMessage ?? "";
-        const categories = [
-          "max_tokens",
-          "thinking",
-          "tool",
-          "OAuth",
-          "authentication",
-          "rate limit",
-          "credit",
-          "overloaded",
-          "context",
-          "model",
-          "beta",
-        ].filter((category) => error.toLowerCase().includes(category.toLowerCase()));
-        t.diagnostic(
-          JSON.stringify({
-            phase: "initial response",
-            stopReason: first.stopReason,
-            httpStatus: error.match(/\b[45]\d\d\b/)?.[0],
-            categories,
-          }),
-        );
-      }
       assert.ok(
         first?.role === "assistant" && first.stopReason === "stop",
         "The initial synthetic turn must succeed before compaction.",

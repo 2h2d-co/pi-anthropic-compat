@@ -14,6 +14,7 @@ type RpcClientModule =
 import { object } from "../extensions/anthropic-compat/json.ts";
 import { CHECKPOINT_TYPE } from "../extensions/anthropic-compat/protocol.ts";
 import { REQUEST_TYPE } from "../extensions/anthropic-compat/tail.ts";
+import { describeFailure, errorLog } from "./error-log.ts";
 import { archiveEntries, packageArchive } from "./package-archive.ts";
 import { isolatePromptPatcher } from "./prompt-patcher.ts";
 
@@ -180,8 +181,10 @@ for (const { modelId, keepRecentTokens, strictLimit } of scenarios) {
         }).trim(),
         piVersion,
       );
+      const errors = errorLog(t);
       let client = new RpcClient(clientOptions);
       t.after(async () => client.stop());
+      client.onEvent(errors.rpcEvent);
       await client.start();
       const state = await client.getState();
       assert.equal(state.model?.id, modelId);
@@ -206,7 +209,7 @@ for (const { modelId, keepRecentTokens, strictLimit } of scenarios) {
         assert.ok(assistant);
         assert.equal(assistant.model, modelId, "Pi must preserve the selected model.");
         assert.equal(assistant.responseModel, undefined, "Anthropic must not substitute a model.");
-        assert.equal(assistant.stopReason, "stop", assistant.errorMessage);
+        assert.equal(assistant.stopReason, "stop", describeFailure(assistant));
         const text = assistant.content.flatMap((item) => (item.type === "text" ? [item.text] : []));
         assert.match(text.join(""), pattern);
         assert.doesNotMatch(client.getStderr(), /Failed to load extension|not a function/);
@@ -262,6 +265,7 @@ for (const { modelId, keepRecentTokens, strictLimit } of scenarios) {
       await client.stop();
 
       client = new RpcClient(clientOptions);
+      client.onEvent(errors.rpcEvent);
       await client.start();
       await turn("Reply with only the storage engine from the project facts.", /SQLite/i);
       const resumed = await client.getEntries();
