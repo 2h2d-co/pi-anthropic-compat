@@ -93,7 +93,9 @@ template records, so they declare the tools the turns sent. The retained-tail
 check uses the tools Pi will send after compaction, so a tool change still
 cancels keep-tail compaction before any summary request.
 
-Pi synthesizes effort-control messages around Fable responses. The extension
+Pi synthesizes effort-control messages around responses from models whose
+catalog entry sets `compat.supportsMidConvoEffort`: Fable 5.1, Opus 5, Opus 5.5,
+Sonnet 5.5, and Haiku 5.5 in Pi 1.1.0. The extension
 removes only a verified duplicate boundary instruction that was already
 summarized. It preserves every instruction inside the retained range.
 
@@ -290,8 +292,9 @@ extension withholds Pi's summary message once a checkpoint exists. The test
 requires the selected Pi to match the repository's Pi development dependency.
 `PI_ANTHROPIC_CLI_PATH` selects another `cli.js` to test; the default is the
 repository's Pi dependency.
-Fable tests retain recent messages. Opus 5.5, Sonnet 5.5, and Haiku 5.5 tests cover both
-full-history and retained-message compaction. The default test suite and CI skip live tests.
+The CLI tests run Opus 5.5, Sonnet 5.5, and Haiku 5.5, each with full-history and
+retained-message compaction. Fable 5.1 runs only in the SDK test, because Pi AI handles its
+requests like those three models. The default test suite and CI skip live tests.
 Anthropic live runs keep normal tools, extensions, capabilities, and resource
 loading enabled. Test state and prompt-patcher rules are isolated without
 restricting the available tools.

@@ -48,18 +48,16 @@ const READ_FACTS =
  * a native compaction, a continuation, a CLI restart, and a resumed continuation against
  * the real Anthropic API. The compaction summary message is withheld from the model once a
  * signed checkpoint exists, so fact recall after compaction proves the signed block replayed.
+ * Fable 5.1 runs only in the SDK test. Pi AI builds its requests like these models'.
  */
-const scenarios = [{ modelId: "claude-fable-5-1", keepRecentTokens: 1 }];
-if (process.env["PI_ANTHROPIC_CLI_BASELINE_ONLY"] !== "1") {
-  scenarios.push(
-    { modelId: "claude-opus-5-5", keepRecentTokens: 0 },
-    { modelId: "claude-opus-5-5", keepRecentTokens: 1 },
-    { modelId: "claude-sonnet-5-5", keepRecentTokens: 0 },
-    { modelId: "claude-sonnet-5-5", keepRecentTokens: 1 },
-    { modelId: "claude-haiku-5-5", keepRecentTokens: 0 },
-    { modelId: "claude-haiku-5-5", keepRecentTokens: 1 },
-  );
-}
+const scenarios = [
+  { modelId: "claude-opus-5-5", keepRecentTokens: 0 },
+  { modelId: "claude-opus-5-5", keepRecentTokens: 1 },
+  { modelId: "claude-sonnet-5-5", keepRecentTokens: 0 },
+  { modelId: "claude-sonnet-5-5", keepRecentTokens: 1 },
+  { modelId: "claude-haiku-5-5", keepRecentTokens: 0 },
+  { modelId: "claude-haiku-5-5", keepRecentTokens: 1 },
+];
 for (const { modelId, keepRecentTokens } of scenarios) {
   test(
     `live packaged Pi CLI ${modelId} compaction, replay, and resume (keepRecentTokens=${keepRecentTokens})`,
