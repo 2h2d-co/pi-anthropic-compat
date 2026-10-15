@@ -51,16 +51,38 @@ const READ_FACTS =
  * Fable 5.1 runs only in the SDK test. Pi AI builds its requests like these models'.
  */
 const scenarios = [
-  { modelId: "claude-opus-5-5", keepRecentTokens: 0 },
-  { modelId: "claude-opus-5-5", keepRecentTokens: 1 },
-  { modelId: "claude-sonnet-5-5", keepRecentTokens: 0 },
-  { modelId: "claude-sonnet-5-5", keepRecentTokens: 1 },
-  { modelId: "claude-haiku-5-5", keepRecentTokens: 0 },
-  { modelId: "claude-haiku-5-5", keepRecentTokens: 1 },
+  { modelId: "claude-opus-5-5", keepRecentTokens: 0, strictLimit: false },
+  { modelId: "claude-opus-5-5", keepRecentTokens: 1, strictLimit: false },
+  { modelId: "claude-sonnet-5-5", keepRecentTokens: 0, strictLimit: false },
+  { modelId: "claude-sonnet-5-5", keepRecentTokens: 1, strictLimit: false },
+  { modelId: "claude-haiku-5-5", keepRecentTokens: 0, strictLimit: false },
+  { modelId: "claude-haiku-5-5", keepRecentTokens: 1, strictLimit: false },
+  // Pi's strict built-in tools plus these exceed Anthropic's limit of 20 strict tools, so Pi
+  // retries every turn with preferred strict tools non-strict, and compaction must follow.
+  { modelId: "claude-sonnet-5-5", keepRecentTokens: 0, strictLimit: true },
 ];
-for (const { modelId, keepRecentTokens } of scenarios) {
+const STRICT_FIXTURE_TOOLS = 21;
+const STRICT_FIXTURE = `export default function (pi) {
+  for (let index = 0; index < ${STRICT_FIXTURE_TOOLS}; index++) {
+    pi.registerTool({
+      name: \`strict_fixture_\${index}\`,
+      label: \`Strict fixture \${index}\`,
+      description: "Synthetic test tool. Never call it.",
+      parameters: {
+        type: "object",
+        properties: { value: { type: "string" } },
+        required: ["value"],
+        additionalProperties: false,
+      },
+      constrainedSampling: { type: "json_schema", strict: "prefer" },
+      execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+    });
+  }
+}
+`;
+for (const { modelId, keepRecentTokens, strictLimit } of scenarios) {
   test(
-    `live packaged Pi CLI ${modelId} compaction, replay, and resume (keepRecentTokens=${keepRecentTokens})`,
+    `live packaged Pi CLI ${modelId} compaction, replay, and resume (keepRecentTokens=${keepRecentTokens}${strictLimit ? ", strict tool limit" : ""})`,
     { skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1", timeout: 300_000 },
     async (t) => {
       const temporary = await mkdtemp(join(tmpdir(), "anthropic-packaged-cli-"));
@@ -124,6 +146,8 @@ for (const { modelId, keepRecentTokens } of scenarios) {
         JSON.stringify({ enabled: true, keepRecentTokens }),
       );
       const sessionFile = join(temporary, "session.jsonl");
+      const strictFixture = join(temporary, "strict-fixture.js");
+      if (strictLimit) await writeFile(strictFixture, STRICT_FIXTURE);
       const clientOptions = {
         cliPath: cli,
         cwd: temporary,
@@ -133,7 +157,17 @@ for (const { modelId, keepRecentTokens } of scenarios) {
           PI_CODING_AGENT_DIR: agent,
           PI_TELEMETRY: "0",
         },
-        args: ["--thinking", "low", "--session", sessionFile, "-e", packageRoot, "-e", patcher],
+        args: [
+          "--thinking",
+          "low",
+          "--session",
+          sessionFile,
+          "-e",
+          packageRoot,
+          "-e",
+          patcher,
+          ...(strictLimit ? ["-e", strictFixture] : []),
+        ],
       };
       // Check the same package-directory selection used for the actual RPC session.
       const versionEnv: NodeJS.ProcessEnv = { ...process.env, ...clientOptions.env };
@@ -190,6 +224,26 @@ for (const { modelId, keepRecentTokens } of scenarios) {
         ),
         "The model read the facts file with the built-in read tool.",
       );
+      if (strictLimit) {
+        const fallbacks = before.entries.filter(
+          (entry) =>
+            entry.type === "message" &&
+            entry.message.role === "assistant" &&
+            (entry.message.diagnostics ?? []).some(
+              (diagnostic) => diagnostic.type === "anthropic_strict_tools_fallback",
+            ),
+        );
+        assert.ok(fallbacks.length > 0, "Anthropic rejected the strict tool set and Pi retried.");
+        // Only the request Anthropic accepted is recorded, once per response.
+        assert.equal(
+          before.entries.filter(
+            (entry) => entry.type === "custom" && entry.customType === REQUEST_TYPE,
+          ).length,
+          before.entries.filter(
+            (entry) => entry.type === "message" && entry.message.role === "assistant",
+          ).length,
+        );
+      }
       const compacted = await client.compact();
       assert.ok(compacted.summary.length > 0);
       const { entries } = await client.getEntries();
@@ -217,7 +271,7 @@ for (const { modelId, keepRecentTokens } of scenarios) {
       );
       await client.stop();
       t.diagnostic(
-        `Pi ${piVersion} loaded the packaged extension for ${modelId}: native compaction, signed replay, and resume passed (keepRecentTokens=${keepRecentTokens}).`,
+        `Pi ${piVersion} loaded the packaged extension for ${modelId}: native compaction, signed replay, and resume passed (keepRecentTokens=${keepRecentTokens}${strictLimit ? ", strict tool limit" : ""}).`,
       );
     },
   );

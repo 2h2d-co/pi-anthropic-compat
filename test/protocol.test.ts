@@ -10,7 +10,12 @@ import {
   summaryPayload,
 } from "../extensions/anthropic-compat/protocol.ts";
 import { object, objects } from "../extensions/anthropic-compat/json.ts";
-import { compactRequest, supportsCompaction } from "../extensions/anthropic-compat/client.ts";
+import {
+  STRICT_TOOL_LIMIT_MESSAGES,
+  StrictToolLimitError,
+  compactRequest,
+  supportsCompaction,
+} from "../extensions/anthropic-compat/client.ts";
 import { block, model, summaryResponse } from "./fixtures.ts";
 import { requireCompletedTools } from "../extensions/anthropic-compat/runtime.ts";
 import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
@@ -205,4 +210,42 @@ test("malformed successful provider responses never expose raw response bodies",
     ),
     { message: "Anthropic returned an invalid JSON response. History was preserved." },
   );
+});
+
+test("strict tool limit rejections are recognized without exposing the provider message", async () => {
+  const send = (status: number, body: string) =>
+    compactRequest(
+      new Request("https://api.anthropic.com/v1/messages", { method: "POST", body: "{}" }),
+      4096,
+      new AbortController().signal,
+      undefined,
+      () => Promise.resolve(new Response(body, { status })),
+    );
+  const rejection = (type: string, message: string) =>
+    JSON.stringify({ type: "error", error: { type, message: `${message} private detail` } });
+  for (const limit of STRICT_TOOL_LIMIT_MESSAGES) {
+    await assert.rejects(send(400, rejection("invalid_request_error", limit)), (error) => {
+      assert.ok(error instanceof StrictToolLimitError);
+      assert.equal(
+        error.message,
+        "Anthropic rejected the strict tool set (HTTP 400). History was preserved.",
+      );
+      return true;
+    });
+  }
+  for (const [status, body] of [
+    [400, rejection("invalid_request_error", "prompt is too long")],
+    [400, rejection("api_error", STRICT_TOOL_LIMIT_MESSAGES[1])],
+    [400, "private non-JSON body"],
+    [413, rejection("invalid_request_error", STRICT_TOOL_LIMIT_MESSAGES[0])],
+  ] as const) {
+    await assert.rejects(send(status, body), (error) => {
+      assert.ok(error instanceof Error && !(error instanceof StrictToolLimitError));
+      assert.equal(
+        error.message,
+        `Anthropic request failed (HTTP ${status}). History was preserved.`,
+      );
+      return true;
+    });
+  }
 });

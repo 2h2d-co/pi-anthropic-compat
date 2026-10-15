@@ -22,6 +22,13 @@ import {
   withoutHiddenTools,
 } from "../extensions/anthropic-compat/runtime.ts";
 import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
+import { TEMPLATE_TYPE } from "../extensions/anthropic-compat/protocol.ts";
+import {
+  REQUEST_TYPE,
+  bindingTemplate,
+  fingerprint,
+  requestBoundary,
+} from "../extensions/anthropic-compat/tail.ts";
 import { block, model, summaryResponse, textResponse } from "./fixtures.ts";
 import { SESSION_SETTINGS_TYPE } from "../extensions/anthropic-compat/settings.ts";
 import { DEFAULT_CONFIG } from "../extensions/anthropic-compat/config.ts";
@@ -35,6 +42,29 @@ const reportTool = defineTool({
   parameters: Type.Object({ value: Type.String() }),
   execute,
 });
+// Anthropic rejects strict tool sets above its limits. Pi then retries with this tool non-strict.
+const strictTool = defineTool({
+  name: "strict_report",
+  label: "Strict report",
+  description: "Report a value with strict arguments.",
+  parameters: Type.Object({ value: Type.String() }, { additionalProperties: false }),
+  constrainedSampling: { type: "json_schema", strict: "prefer" },
+  execute,
+});
+const strictToolLimit = () =>
+  Response.json(
+    {
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message: "Too many strict tools (21). The maximum number of strict tools supported is 20",
+      },
+    },
+    { status: 400 },
+  );
+const hasStrictTool = (body: JsonObject) =>
+  body["tools"] !== undefined && objects(body["tools"]).some((tool) => tool["strict"] === true);
+
 const handoffTool = defineTool({
   name: "handoff",
   label: "Handoff",
@@ -58,6 +88,8 @@ async function setup(
     patchSystem?: boolean;
     /** Activate Pi codemode in this mode next to a direct and a model-only tool. */
     codemode?: "on" | "only";
+    /** Offer a strict-preferred tool and reject every request that sends it strict. */
+    strictLimit?: boolean;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "anthropic-integration-"));
@@ -96,6 +128,7 @@ async function setup(
     }
     const body = object(await request.json());
     requests.push(body);
+    if (options.strictLimit && hasStrictTool(body)) return strictToolLimit();
     if (body["compaction"]) {
       onSummary?.();
       if (options.fail)
@@ -173,10 +206,13 @@ async function setup(
       resourceLoader: loader,
       ...(options.codemode
         ? { noTools: "builtin" as const, customTools: [reportTool, handoffTool] }
-        : { noTools: "all" as const }),
+        : options.strictLimit
+          ? { noTools: "builtin" as const, customTools: [strictTool] }
+          : { noTools: "all" as const }),
     });
     await session.bindExtensions({});
     if (options.codemode) session.setActiveToolsByName(["report", "handoff", "codemode"]);
+    if (options.strictLimit) session.setActiveToolsByName(["strict_report"]);
     contextWindow = session.model?.contextWindow ?? model.contextWindow;
     t.after(() => session.dispose());
     return session;
@@ -362,6 +398,73 @@ test("native failure cancels compaction without losing history or falling back",
   assert.equal(manager.getLeafId(), leaf);
   assert.equal(activeCheckpoint(manager.getBranch()), undefined);
   assert.equal(requests.length, 2);
+});
+
+test("a turn Pi retries without strict tools records only the accepted request", async (t) => {
+  const { session, manager, requests } = await setup(t, {
+    modelId: "claude-opus-5-5",
+    managed: true,
+    strictLimit: true,
+  });
+  await session.prompt("Remember the synthetic project Lantern.");
+  await session.prompt("Continue.");
+  assert.deepEqual(requests.map(hasStrictTool), [true, false, true, false]);
+  const custom = (type: string) =>
+    manager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === type);
+  assert.equal(custom(TEMPLATE_TYPE).length, 1);
+  const boundaries = custom(REQUEST_TYPE);
+  assert.equal(boundaries.length, 2);
+  for (const [index, entry] of boundaries.entries()) {
+    assert.ok(entry.type === "custom");
+    const accepted = requests[index * 2 + 1];
+    assert.ok(accepted);
+    assert.equal(object(entry.data)["templateHash"], fingerprint(bindingTemplate(accepted)));
+  }
+  assert.equal(
+    hasStrictTool(object(activeTemplate(manager.getBranch(), "claude-opus-5-5"))),
+    false,
+  );
+});
+
+test("full-history compaction retries once with preferred strict tools non-strict", async (t) => {
+  const { session, manager, requests } = await setup(t, {
+    modelId: "claude-opus-5-5",
+    managed: true,
+    strictLimit: true,
+  });
+  await session.prompt("Remember the synthetic project Lantern.");
+  const result = await session.compact();
+  assert.equal(result.summary, block["content"]);
+  const summaries = requests.filter((request) => request["compaction"]);
+  assert.deepEqual(summaries.map(hasStrictTool), [true, false]);
+  assert.equal(activeCheckpoint(manager.getBranch())?.model, "claude-opus-5-5");
+  await session.prompt("Continue.");
+  const latest = requests.at(-1);
+  assert.ok(latest);
+  assert.equal(hasStrictTool(latest), false);
+  assert.deepEqual(objects(latest["messages"])[0], { role: "assistant", content: [block] });
+});
+
+test("retained-message compaction cancels when Anthropic rejects the strict tool set", async (t) => {
+  const { session, manager, requests } = await setup(t, {
+    modelId: "claude-opus-5-5",
+    managed: true,
+    strictLimit: true,
+    keepRecentTokens: 1,
+  });
+  await session.prompt("Remember the synthetic project Lantern.");
+  // Earlier versions also recorded the rejected strict request as a boundary.
+  const user = manager
+    .getBranch()
+    .find((entry) => entry.type === "message" && entry.message.role === "user");
+  const rejected = requests[0];
+  assert.ok(user && rejected && hasStrictTool(rejected));
+  manager.appendCustomEntry(REQUEST_TYPE, requestBoundary(rejected, user.id));
+  const leaf = manager.getLeafId();
+  await assert.rejects(session.compact(), /cancelled/i);
+  assert.deepEqual(requests.filter((request) => request["compaction"]).map(hasStrictTool), [true]);
+  assert.equal(manager.getLeafId(), leaf);
+  assert.equal(activeCheckpoint(manager.getBranch()), undefined);
 });
 
 test("Pi automatic threshold invokes native compaction", async (t) => {

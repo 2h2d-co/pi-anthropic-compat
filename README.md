@@ -45,6 +45,17 @@ Full-history compaction is the default. Set **Native tail tokens** in
 thinking. This extension's `keepRecentTokens` setting controls retention.
 Pi's separate setting with the same name does not control the native boundary.
 
+### Strict tool limits
+
+Anthropic rejects a request whose strict tools exceed its limits, such as more
+than 20 strict tools. Pi then retries the turn once with `strict: "prefer"` tools
+non-strict. The extension records only the request Anthropic accepted.
+Full-history compaction follows Pi: when Anthropic rejects the summary request
+for the same reason, it retries once with those tools non-strict. Retained-message
+compaction cancels instead, because Pi sends the strict tool set first on every
+later turn and retained history replays only behind the tools it was answered
+with. Use full-history compaction in such sessions.
+
 ### Retaining recent messages
 
 Set `keepRecentTokens` to a positive integer, such as `16000`.

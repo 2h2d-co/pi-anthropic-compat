@@ -18,7 +18,12 @@ import {
   type ExtensionContext,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { compactRequest, supportsCompaction } from "./client.ts";
+import {
+  STRICT_TOOL_LIMIT_MESSAGES,
+  StrictToolLimitError,
+  compactRequest,
+  supportsCompaction,
+} from "./client.ts";
 import type { Config } from "./config.ts";
 import { object, objects, type JsonObject } from "./json.ts";
 import {
@@ -46,18 +51,38 @@ import {
 
 const anthropic = anthropicMessagesApi();
 
+/**
+ * Serialize a request through Pi's Anthropic adapter without sending it. With `nonStrict`, the
+ * first attempt is answered with a strict-tool-limit rejection, so Pi serializes its own retry
+ * with `strict: "prefer"` tools non-strict, exactly as it does for a rejected turn. Without such
+ * tools, Pi does not retry and the first serialization is already non-strict.
+ */
 async function prepareRequest(
   model: Model<"anthropic-messages">,
   context: TranscriptContext,
   options: SimpleStreamOptions,
+  nonStrict = false,
 ): Promise<Request> {
   let prepared: Request | undefined;
+  let rejected = false;
   await anthropic
     .streamSimple(model, context, {
       ...options,
       maxRetries: 0,
       fetch: (input, init) => {
         prepared = new Request(input, init);
+        if (nonStrict && !rejected) {
+          rejected = true;
+          return Promise.resolve(
+            Response.json(
+              {
+                type: "error",
+                error: { type: "invalid_request_error", message: STRICT_TOOL_LIMIT_MESSAGES[1] },
+              },
+              { status: 400 },
+            ),
+          );
+        }
         return Promise.reject(new Error("Native request prepared without transmission."));
       },
     })
@@ -208,9 +233,13 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
     api: "anthropic-messages",
     streamSimple: (model, messages, options) => {
       if (!anthropicModel(model)) throw new Error("Expected Anthropic Messages API.");
+      // Pi can serialize a turn twice: after a strict-tool-limit rejection it retries once with
+      // preferred strict tools non-strict. Only the request Anthropic accepts is recorded.
+      let record: (() => void) | undefined;
       return anthropic.streamSimple(model, messages, {
         ...options,
         onPayload: async (payload, selected) => {
+          record = undefined;
           const updated = await options?.onPayload?.(payload, selected);
           const transformed = object(updated === undefined ? payload : updated);
           const ctx = context;
@@ -221,9 +250,6 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
           transformModel = model.id;
           const branch = ctx.sessionManager.getBranch();
           const nextTemplate = template(transformed);
-          if (JSON.stringify(activeTemplate(branch, model.id)) !== JSON.stringify(nextTemplate)) {
-            pi.appendEntry(TEMPLATE_TYPE, nextTemplate);
-          }
           const current = configuration(ctx);
           const final = replay(
             current.enabled && current.keepRecentTokens > 0
@@ -232,8 +258,20 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
             activeCheckpoint(branch),
           );
           const anchor = ctx.sessionManager.getLeafId();
-          if (anchor) pi.appendEntry(REQUEST_TYPE, requestBoundary(final, anchor));
+          record = () => {
+            const saved = activeTemplate(ctx.sessionManager.getBranch(), model.id);
+            if (JSON.stringify(saved) !== JSON.stringify(nextTemplate)) {
+              pi.appendEntry(TEMPLATE_TYPE, nextTemplate);
+            }
+            if (anchor) pi.appendEntry(REQUEST_TYPE, requestBoundary(final, anchor));
+          };
           return final;
+        },
+        onResponse: async (response, selected) => {
+          const accepted = record;
+          record = undefined;
+          accepted?.();
+          await options?.onResponse?.(response, selected);
         },
       });
     },
@@ -311,15 +349,20 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
         },
       };
       // Serialize without transmission, then select only a proven earlier request.
-      const whole = await prepareRequest(
-        requestModel,
-        normalizeContext({ messages }),
-        serializationOptions,
-      );
-      const wholePayload = replay(object(await whole.clone().json()), saved);
-      if (wholePayload["model"] !== model.id) {
-        throw new Error("A provider transform changed the summary model. History was preserved.");
-      }
+      const serialize = async (nonStrict: boolean) => {
+        const request = await prepareRequest(
+          requestModel,
+          normalizeContext({ messages }),
+          serializationOptions,
+          nonStrict,
+        );
+        const payload = replay(object(await request.clone().json()), saved);
+        if (payload["model"] !== model.id) {
+          throw new Error("A provider transform changed the summary model. History was preserved.");
+        }
+        return { request, payload };
+      };
+      let { request: whole, payload: wholePayload } = await serialize(false);
       const keepRecentTokens = configuration(ctx).keepRecentTokens;
       const managedEffort = model.compat?.supportsMidConvoEffort === true;
       const selection =
@@ -343,27 +386,49 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
           managedEffort,
         );
       }
-      const prepared = new Request(whole.url, {
-        method: "POST",
-        headers: whole.headers,
-        body: JSON.stringify(
-          selection ? { ...wholePayload, messages: selection.prefix } : wholePayload,
-        ),
-      });
-      if (!(await supportsCompaction(prepared, model.id, signal, fetcher))) {
+      const summaryRequest = () =>
+        new Request(whole.url, {
+          method: "POST",
+          headers: whole.headers,
+          body: JSON.stringify(
+            selection ? { ...wholePayload, messages: selection.prefix } : wholePayload,
+          ),
+        });
+      if (!(await supportsCompaction(summaryRequest(), model.id, signal, fetcher))) {
         ctx.ui.notify(
           "This model does not support native compaction. Pi compaction remains available.",
           "warning",
         );
         return;
       }
-      const raw = await compactRequest(
-        prepared,
-        Math.min(configuration(ctx).maxSummaryTokens, model.maxTokens),
-        signal,
-        event.customInstructions,
-        fetcher,
-      );
+      const summarize = () =>
+        compactRequest(
+          summaryRequest(),
+          Math.min(configuration(ctx).maxSummaryTokens, model.maxTokens),
+          signal,
+          event.customInstructions,
+          fetcher,
+        );
+      let raw: JsonObject;
+      try {
+        raw = await summarize();
+      } catch (error) {
+        if (!(error instanceof StrictToolLimitError)) throw error;
+        // Retained messages replay only behind the tool set they were answered with, and Pi
+        // sends the strict set first on every later turn.
+        if (selection) {
+          throw new Error(
+            "Anthropic rejects this session's strict tool set, so retained-message compaction cannot run. Set Native tail tokens to 0 for full-history compaction. History was preserved.",
+            { cause: error },
+          );
+        }
+        // Follow Pi: retry once with preferred strict tools non-strict.
+        const downgraded = await serialize(true);
+        if (JSON.stringify(downgraded.payload) === JSON.stringify(wholePayload)) throw error;
+        whole = downgraded.request;
+        wholePayload = downgraded.payload;
+        raw = await summarize();
+      }
       const result = parseSummary(raw, model);
       signal.throwIfAborted();
       if (selection) {
