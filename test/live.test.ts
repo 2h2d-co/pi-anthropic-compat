@@ -22,8 +22,8 @@ import extension from "../extensions/index.ts";
 import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
 import { activeCheckpoint } from "../extensions/anthropic-compat/runtime.ts";
 import { messageHash } from "../extensions/anthropic-compat/tail.ts";
-import { errorLog } from "./error-log.ts";
-import { isolatePromptPatcher } from "./prompt-patcher.ts";
+import { errorLog } from "./support/error-log.ts";
+import { isolatePromptPatcher } from "./support/prompt-patcher.ts";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 

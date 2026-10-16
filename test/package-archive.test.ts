@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
-import { archiveEntries, packageArchive } from "./package-archive.ts";
+import { archiveEntries, packageArchive } from "./support/package-archive.ts";
 
 test("uses the supplied candidate without packing the working directory", async (t) => {
   const temporary = await mkdtemp(join(tmpdir(), "anthropic-archive-test-"));

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { objects } from "../extensions/anthropic-compat/json.ts";
+import { objects } from "../../extensions/anthropic-compat/json.ts";
 
 // An explicitly supplied candidate must never fall back to packing the worktree.
 export async function packageArchive(

@@ -16,7 +16,7 @@ import {
   compactRequest,
   supportsCompaction,
 } from "../extensions/anthropic-compat/client.ts";
-import { block, model, summaryResponse } from "./fixtures.ts";
+import { block, model, summaryResponse } from "./support/fixtures.ts";
 import { requireCompletedTools } from "../extensions/anthropic-compat/runtime.ts";
 import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
 

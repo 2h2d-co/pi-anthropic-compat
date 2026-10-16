@@ -1,5 +1,5 @@
 import type { Model } from "@earendil-works/pi-ai";
-import type { JsonObject } from "../extensions/anthropic-compat/json.ts";
+import type { JsonObject } from "../../extensions/anthropic-compat/json.ts";
 
 export const model: Model<"anthropic-messages"> = {
   id: "claude-sonnet-5",

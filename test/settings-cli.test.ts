@@ -9,7 +9,7 @@ import { stripVTControlCharacters } from "node:util";
 import { setTimeout } from "node:timers/promises";
 import { spawn } from "node-pty";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { packageArchive } from "./package-archive.ts";
+import { packageArchive } from "./support/package-archive.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 for (const mode of ["regular", "fullscreen"]) {

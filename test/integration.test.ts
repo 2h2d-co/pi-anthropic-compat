@@ -24,7 +24,7 @@ import {
 import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
 import { TEMPLATE_TYPE } from "../extensions/anthropic-compat/protocol.ts";
 import { REQUEST_TYPE, bindingTemplate, fingerprint } from "../extensions/anthropic-compat/tail.ts";
-import { block, model, summaryResponse, textResponse } from "./fixtures.ts";
+import { block, model, summaryResponse, textResponse } from "./support/fixtures.ts";
 import { SESSION_SETTINGS_TYPE } from "../extensions/anthropic-compat/settings.ts";
 import { DEFAULT_CONFIG } from "../extensions/anthropic-compat/config.ts";
 import { sessionSettingsEntry } from "../extensions/settings-session.ts";

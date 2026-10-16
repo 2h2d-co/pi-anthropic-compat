@@ -14,9 +14,9 @@ type RpcClientModule =
 import { object } from "../extensions/anthropic-compat/json.ts";
 import { CHECKPOINT_TYPE } from "../extensions/anthropic-compat/protocol.ts";
 import { REQUEST_TYPE } from "../extensions/anthropic-compat/tail.ts";
-import { describeFailure, errorLog } from "./error-log.ts";
-import { archiveEntries, packageArchive } from "./package-archive.ts";
-import { isolatePromptPatcher } from "./prompt-patcher.ts";
+import { describeFailure, errorLog } from "./support/error-log.ts";
+import { archiveEntries, packageArchive } from "./support/package-archive.ts";
+import { isolatePromptPatcher } from "./support/prompt-patcher.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 

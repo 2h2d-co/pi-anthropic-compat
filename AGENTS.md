@@ -5,7 +5,7 @@
 - Keep `extensions/index.ts` thin. Compatibility behavior belongs in focused modules under `extensions/anthropic-compat/`.
 - Native compaction must fail closed. Do not silently substitute a plain-text summary after native failure.
 - Preserve exact native blocks and signatures. Never print credentials, signed block contents, or raw provider error bodies.
-- Live tests report every error they meet as a test diagnostic, even when they pass: extension error and warning notices, extension errors, and failed responses. Use `test/error-log.ts`. Summarize failed responses by stop reason, HTTP status, and error category; never print provider error text or credentials.
+- Live tests report every error they meet as a test diagnostic, even when they pass: extension error and warning notices, extension errors, and failed responses. Use `test/support/error-log.ts`. Summarize failed responses by stop reason, HTTP status, and error category; never print provider error text or credentials.
 - Keep final provider-payload transforms effective, including the Anthropic system-prompt patcher.
 - Anthropic live tests keep normal tool, capability, extension, and resource loading enabled. Never restrict tools or disable resources to simplify the harness. Preserve the effective prompt-patcher rules in isolated test state.
 - Keep-tail compaction must use verified earlier native requests and preserve the retained messages exactly. Never infer native boundaries from displayed turn counts or silently fall back to full-history compaction. The one fallback is a session whose strict tool set Anthropic rejects: compact the full history and notify the user.
@@ -33,3 +33,4 @@
 - Use `npm run release -- <version>` to build the release package locally, create an SSH-signed `release: v<version>` commit containing its `Npm-Artifact-SHA256` trailer, verify a clean rebuild, and create the matching lightweight tag.
 - Push the release commit and tag atomically; do not use `git tag -a`, `git tag -s`, `git tag -m`, or `cog bump --annotated`.
 - Push stable or prerelease `v<version>` tags and let CI build and stage the package with trusted publishing and provenance, then create the immutable GitHub release from the verified archive and the version's changelog section. Never create GitHub releases by hand. Stable versions use `latest`; prereleases derive a non-`latest` dist-tag from their first prerelease identifier.
+- Keep tests in `test/*.test.ts`, code that tests import or load into Pi in `test/support/`, and test data in `test/fixtures/`.

@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { object } from "../extensions/anthropic-compat/json.ts";
+import { object } from "../../extensions/anthropic-compat/json.ts";
 
 export const PATCHER_SETTINGS_FILE = "pi-system-prompt-patcher.json";
 export const ISOLATED_REPLACEMENT_FILE = "pi-system-prompt-patcher-replacements.json";

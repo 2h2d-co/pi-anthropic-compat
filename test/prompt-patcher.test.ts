@@ -17,7 +17,7 @@ import {
   PATCHER_SETTINGS_FILE,
   resolveReplacementFile,
   selectReplacementFile,
-} from "./prompt-patcher.ts";
+} from "./support/prompt-patcher.ts";
 
 type PatcherHandler = (
   event: { payload: unknown },
