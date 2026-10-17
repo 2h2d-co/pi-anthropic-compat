@@ -231,7 +231,11 @@ for (const modelId of [
         .replace(/^```(?:json)?\s*/, "")
         .replace(/\s*```$/, "");
       const result = object(JSON.parse(json));
-      assert.equal(result["project"], "Lantern");
+      // The prompt calls it "project Lantern", so models may answer with either name.
+      assert.ok(
+        typeof result["project"] === "string" && /^(?:project )?Lantern$/i.test(result["project"]),
+        `Expected the project Lantern, got ${JSON.stringify(result["project"])}.`,
+      );
       assert.equal(result["language"], "TypeScript");
       assert.equal(result["port"], 4317);
       assert.equal(result["storage"], "SQLite");
