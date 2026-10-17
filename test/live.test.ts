@@ -27,6 +27,14 @@ import { isolatePromptPatcher } from "./support/prompt-patcher.ts";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
+/** The prompts call it "project Lantern", so models may answer with either name. */
+function assertProjectLantern(value: unknown): void {
+  assert.ok(
+    typeof value === "string" && /^(?:project )?Lantern$/i.test(value),
+    `Expected the project Lantern, got ${JSON.stringify(value)}.`,
+  );
+}
+
 async function liveSession(
   t: TestContext,
   modelId: string,
@@ -231,11 +239,7 @@ for (const modelId of [
         .replace(/^```(?:json)?\s*/, "")
         .replace(/\s*```$/, "");
       const result = object(JSON.parse(json));
-      // The prompt calls it "project Lantern", so models may answer with either name.
-      assert.ok(
-        typeof result["project"] === "string" && /^(?:project )?Lantern$/i.test(result["project"]),
-        `Expected the project Lantern, got ${JSON.stringify(result["project"])}.`,
-      );
+      assertProjectLantern(result["project"]);
       assert.equal(result["language"], "TypeScript");
       assert.equal(result["port"], 4317);
       assert.equal(result["storage"], "SQLite");
@@ -354,7 +358,7 @@ test(
       .replace(/^```(?:json)?\s*/, "")
       .replace(/\s*```$/, "");
     const result = object(JSON.parse(text));
-    assert.equal(result["project"], "Lantern");
+    assertProjectLantern(result["project"]);
     assert.equal(result["port"], 4317);
     assert.deepEqual(requests.at(-1)?.["tools"], turn["tools"]);
   },
