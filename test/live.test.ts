@@ -437,7 +437,8 @@ test(
       last?.role === "assistant" && last.stopReason === "stop",
       "Expected a successful continuation.",
     );
-    assert.deepEqual(recalled, ["Lantern"]);
+    assert.equal(recalled.length, 1, "Expected exactly one recall_code call.");
+    assertProjectLantern(recalled[0]);
     assert.match(
       last.content
         .filter((item) => item.type === "text")
