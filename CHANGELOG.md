@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A session no longer fails every request after compaction with "tool_addition/tool_removal
+  references unknown tool" when a tool was removed before compaction. Anthropic records the
+  removal in the signed summary, and the extension now declares the removed tool again so the
+  summary can remove it. Sessions already compacted by 0.0.14 recover on their next request.
+
 ## [0.0.14] - 2026-10-22
 
 ### Fixed

@@ -34,8 +34,10 @@ import {
   eligibleModel,
   enforceThinking,
   parseSummary,
+  referencedTools,
   replay,
   template,
+  toolDefinitions,
 } from "./protocol.ts";
 import { loadSessionConfig, registerSettings } from "./settings.ts";
 import {
@@ -176,7 +178,15 @@ export function compactedTranscript(
 export function activeCheckpoint(entries: readonly SessionEntry[]) {
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
-    if (entry?.type === "compaction") return checkpoint(entry.details);
+    if (entry?.type !== "compaction") continue;
+    const saved = checkpoint(entry.details);
+    if (!saved || saved.tools) return saved;
+    const names = referencedTools(saved.block);
+    if (names.length === 0) return saved;
+    // Checkpoints written before 0.0.15 do not record the definitions of the tools their block
+    // names. The summary request declared the tools of the last turn before compaction.
+    const summarized = activeTemplate(entries.slice(0, index), saved.model);
+    return summarized ? { ...saved, tools: toolDefinitions(summarized, names) } : saved;
   }
   return undefined;
 }
@@ -455,6 +465,17 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
         raw = await summarize();
       }
       const result = parseSummary(raw, model);
+      // Replay must declare every tool the block's net tool changes name.
+      const referenced = referencedTools(result.block);
+      const referencedDefinitions = toolDefinitions(
+        selection ? { ...wholePayload, messages: selection.prefix } : wholePayload,
+        referenced,
+      );
+      if (referencedDefinitions.length !== referenced.length) {
+        throw new Error(
+          "The summary refers to a tool the summary request did not declare. History was preserved.",
+        );
+      }
       signal.throwIfAborted();
       if (selection) {
         const verification = await prepareRequest(
@@ -504,6 +525,7 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
             model: model.id,
             block: result.block,
             ...(retained ? { retained } : {}),
+            ...(referencedDefinitions.length > 0 ? { tools: referencedDefinitions } : {}),
           },
         },
       };

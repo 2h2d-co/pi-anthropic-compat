@@ -37,6 +37,8 @@ export type Checkpoint = {
   model: string;
   block: JsonObject;
   retained?: RetainedHistory;
+  /** Definitions of the tools the block's `tool_changes` name, from the summary request. */
+  tools?: JsonObject[];
 };
 
 export function checkpoint(details: unknown): Checkpoint | undefined {
@@ -53,7 +55,86 @@ export function checkpoint(details: unknown): Checkpoint | undefined {
     model: data["model"],
     block,
     ...(data["retained"] === undefined ? {} : { retained: retainedHistory(data["retained"]) }),
+    // Checkpoints written before 0.0.15 have no tool definitions.
+    ...(Array.isArray(data["tools"]) ? { tools: objects(data["tools"]) } : {}),
   };
+}
+
+function toolName(tool: JsonObject): string | undefined {
+  return typeof tool["name"] === "string" ? tool["name"] : undefined;
+}
+
+/**
+ * Tools the block's `tool_changes` name by reference. With the inline-tools beta, Anthropic
+ * records the net tool changes of the summarized turns in the block, relative to the summary
+ * request's `tools`. A reference must name a tool declared in a later request's `tools`.
+ */
+export function referencedTools(block: JsonObject): string[] {
+  const changes = block["tool_changes"];
+  if (!Array.isArray(changes)) return [];
+  const names = objects(changes).flatMap((change) => {
+    const tool = object(change["tool"]);
+    const name = tool["type"] === "tool_reference" ? toolName(tool) : undefined;
+    return name === undefined ? [] : [name];
+  });
+  return [...new Set(names)];
+}
+
+/**
+ * Definitions of the named tools, from a request's `tools` and the tools its messages define
+ * inline. A later definition of a name replaces an earlier one.
+ */
+export function toolDefinitions(payload: JsonObject, names: readonly string[]): JsonObject[] {
+  if (names.length === 0) return [];
+  const found = new Map<string, JsonObject>();
+  const record = (definition: JsonObject) => {
+    const name = toolName(definition);
+    if (name !== undefined && names.includes(name)) found.set(name, definition);
+  };
+  const tools = payload["tools"];
+  if (Array.isArray(tools)) objects(tools).forEach(record);
+  const messages = payload["messages"];
+  for (const message of Array.isArray(messages) ? objects(messages) : []) {
+    const content = message["content"];
+    if (!Array.isArray(content)) continue;
+    for (const block of objects(content)) {
+      if (block["type"] !== "tool_addition") continue;
+      const tool = object(block["tool"]);
+      if (tool["type"] === "tool_definition") record(object(tool["definition"]));
+    }
+  }
+  return names.flatMap((name) => {
+    const definition = found.get(name);
+    return definition ? [definition] : [];
+  });
+}
+
+/**
+ * Declare every tool the block names that the request's `tools` lacks. Pi declares the tools that
+ * are current after compaction, so a tool the summarized turns removed is missing, and Anthropic
+ * rejects the block's removal of it. Declared again, the block removes it, so the model is offered
+ * exactly Pi's current tools.
+ */
+function declareReferencedTools(payload: JsonObject, saved: Checkpoint): JsonObject {
+  const tools = payload["tools"] === undefined ? [] : objects(payload["tools"]);
+  const declared = new Set(tools.flatMap((tool) => toolName(tool) ?? []));
+  const missing = referencedTools(saved.block).filter((name) => !declared.has(name));
+  if (missing.length === 0) return payload;
+  const definitions = saved.tools ?? [];
+  const added = missing.map((name) => {
+    const definition = definitions.find((tool) => toolName(tool) === name);
+    if (!definition) {
+      throw new Error(
+        `The compaction summary refers to the tool ${name}, whose definition was not recorded.`,
+      );
+    }
+    // The summary request may have marked this tool as a cache breakpoint. Anthropic limits a
+    // request to four, and Pi places its own.
+    const result = { ...definition };
+    delete result["cache_control"];
+    return result;
+  });
+  return { ...payload, tools: [...tools, ...added] };
 }
 
 export function signedBlock(value: unknown): JsonObject {
@@ -97,6 +178,7 @@ export function enforceThinking(payload: JsonObject): JsonObject {
 export function replay(payload: JsonObject, saved: Checkpoint | undefined): JsonObject {
   if (!saved) return payload;
   if (saved.retained) payload = enforceThinking(replayRetained(payload, saved.retained));
+  payload = declareReferencedTools(payload, saved);
   const messages = objects(payload["messages"]);
   for (const message of messages) {
     if (

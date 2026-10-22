@@ -57,6 +57,14 @@ compact the full history even when **Native tail tokens** is set, and a warning
 says so. Retained history replays only behind the tools it was answered with, and
 Pi sends the strict tool set first on every later turn.
 
+### Tool changes
+
+When the summarized conversation adds or removes tools, Anthropic records their
+net effect in the signed summary. A removal there names a tool that Pi no
+longer declares after compaction. The extension records that tool's definition
+with the summary and declares it again on every later request, and the summary
+then removes it. The model is offered exactly Pi's current tools.
+
 ### Retaining recent messages
 
 Set `keepRecentTokens` to a positive integer, such as `16000`.

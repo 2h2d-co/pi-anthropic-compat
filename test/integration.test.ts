@@ -88,6 +88,8 @@ async function setup(
      * only summary requests.
      */
     strictLimit?: boolean | "compaction";
+    /** The signed block the summary returns. Default: the fixture block. */
+    summaryBlock?: JsonObject;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "anthropic-integration-"));
@@ -140,7 +142,10 @@ async function setup(
           content: [],
           stop_reason: "max_tokens",
         });
-      return Response.json(summaryResponse(selected.id));
+      return Response.json({
+        ...summaryResponse(selected.id),
+        content: [options.summaryBlock ?? block],
+      });
     }
     ordinary++;
     return textResponse(
@@ -401,6 +406,83 @@ test("native failure cancels compaction without losing history or falling back",
   assert.equal(manager.getLeafId(), leaf);
   assert.equal(activeCheckpoint(manager.getBranch()), undefined);
   assert.equal(requests.length, 2);
+});
+
+const removedReport: JsonObject = {
+  ...block,
+  tool_changes: [{ type: "tool_removal", tool: { type: "tool_reference", name: "report" } }],
+};
+
+/** The `report` declarations in a request's top-level tools. */
+function reportDeclarations(request: JsonObject | undefined): JsonObject[] {
+  return objects(request?.["tools"]).filter((tool) => tool["name"] === "report");
+}
+
+test("replay restates a tool the signed block removes after Pi withdrew it", async (t) => {
+  const { session, manager, requests } = await setup(t, {
+    codemode: "on",
+    modelId: "claude-opus-5-5",
+    managed: true,
+    summaryBlock: removedReport,
+  });
+  await session.prompt("Remember the synthetic project Lantern.");
+  session.setActiveToolsByName(["handoff", "codemode"]);
+  await session.prompt("Remember the synthetic city Harbor.");
+  await session.compact();
+  const saved = activeCheckpoint(manager.getBranch());
+  assert.deepEqual(
+    saved?.tools?.map((tool) => tool["name"]),
+    ["report"],
+  );
+  await session.prompt("Continue.");
+  const latest = requests.at(-1);
+  assert.deepEqual(objects(latest?.["messages"])[0], {
+    role: "assistant",
+    content: [removedReport],
+  });
+  const declarations = reportDeclarations(latest);
+  assert.equal(declarations.length, 1);
+  assert.equal(declarations[0]?.["cache_control"], undefined);
+  const last = session.messages.at(-1);
+  assert.ok(last?.role === "assistant" && last.stopReason === "stop");
+});
+
+test("replay restates removed tools for checkpoints that recorded no definitions", async (t) => {
+  const { session, manager, requests, create } = await setup(t, {
+    codemode: "on",
+    modelId: "claude-opus-5-5",
+    managed: true,
+    persistent: true,
+    summaryBlock: removedReport,
+  });
+  await session.prompt("Remember the synthetic project Lantern.");
+  session.setActiveToolsByName(["handoff", "codemode"]);
+  await session.prompt("Remember the synthetic city Harbor.");
+  await session.compact();
+  const file = manager.getSessionFile();
+  assert.ok(file);
+  session.dispose();
+  // Version 0.0.14 wrote the same checkpoint without tool definitions.
+  const lines = (await readFile(file, "utf8")).trimEnd().split("\n");
+  await writeFile(
+    file,
+    `${lines
+      .map((line) => {
+        const entry = object(JSON.parse(line));
+        if (entry["type"] !== "compaction") return line;
+        const { tools: _tools, ...details } = object(entry["details"]);
+        return JSON.stringify({ ...entry, details });
+      })
+      .join("\n")}\n`,
+  );
+  const restored = SessionManager.open(file);
+  const compaction = restored.getBranch().find((entry) => entry.type === "compaction");
+  assert.equal(compaction?.type === "compaction" && "tools" in object(compaction.details), false);
+  const resumed = await create(restored);
+  await resumed.prompt("Continue after resume.");
+  const declarations = reportDeclarations(requests.at(-1));
+  assert.equal(declarations.length, 1);
+  assert.equal(declarations[0]?.["cache_control"], undefined);
 });
 
 for (const keepRecentTokens of [0, 1]) {

@@ -6,8 +6,10 @@ import {
   checkpoint,
   eligibleModel,
   parseSummary,
+  referencedTools,
   replay,
   summaryPayload,
+  toolDefinitions,
 } from "../extensions/anthropic-compat/protocol.ts";
 import { object, objects } from "../extensions/anthropic-compat/json.ts";
 import {
@@ -61,6 +63,80 @@ test("replay preserves all opaque fields and appends rather than replaces beta h
       replay({ ...original, context_management: { edits: [{ type: "compact_20260112" }] } }, saved),
     /Threshold/,
   );
+});
+
+test("replay declares tools the block's tool changes name and Pi no longer declares", () => {
+  const removal = { type: "tool_removal", tool: { type: "tool_reference", name: "retired" } };
+  const changed = {
+    ...block,
+    tool_changes: [
+      removal,
+      { type: "tool_addition", tool: { type: "tool_reference", name: "Read" } },
+      {
+        type: "tool_addition",
+        tool: { type: "tool_definition", definition: { name: "inline", input_schema: {} } },
+      },
+    ],
+  };
+  assert.deepEqual(referencedTools(changed), ["retired", "Read"]);
+  assert.deepEqual(referencedTools(block), []);
+  const retired = {
+    name: "retired",
+    description: "Withdrawn tool.",
+    input_schema: { type: "object" },
+    cache_control: { type: "ephemeral" },
+  };
+  const saved = checkpoint({
+    type: CHECKPOINT_TYPE,
+    version: 1,
+    model: model.id,
+    block: changed,
+    tools: [retired],
+  });
+  assert.ok(saved);
+  const tools = [{ name: "Read", input_schema: {}, cache_control: { type: "ephemeral" } }];
+  const result = replay({ tools, messages: [{ role: "user", content: "Continue" }] }, saved);
+  // Pi's own tools and cache marker stay; the restated tool carries no cache marker.
+  assert.deepEqual(result["tools"], [
+    ...tools,
+    { name: "retired", description: "Withdrawn tool.", input_schema: { type: "object" } },
+  ]);
+  assert.deepEqual(objects(result["messages"])[0], { role: "assistant", content: [changed] });
+  // A request that already declares the tool is unchanged.
+  const declared = replay({ tools: [...tools, retired], messages: [] }, saved);
+  assert.deepEqual(declared["tools"], [...tools, retired]);
+  // Without a recorded definition, replay stops before transmission.
+  const unrecorded = checkpoint({
+    type: CHECKPOINT_TYPE,
+    version: 1,
+    model: model.id,
+    block: changed,
+  });
+  assert.ok(unrecorded);
+  assert.throws(() => replay({ tools, messages: [] }, unrecorded), /retired, whose definition/);
+});
+
+test("tool definitions come from the request tools and inline definitions", () => {
+  const payload = {
+    tools: [{ name: "first", input_schema: {} }, { name: "other" }],
+    messages: [
+      {
+        role: "system",
+        content: [
+          {
+            type: "tool_addition",
+            tool: { type: "tool_definition", definition: { name: "added", input_schema: {} } },
+          },
+          { type: "tool_removal", tool: { type: "tool_reference", name: "first" } },
+        ],
+      },
+    ],
+  };
+  assert.deepEqual(toolDefinitions(payload, ["added", "first", "missing"]), [
+    { name: "added", input_schema: {} },
+    { name: "first", input_schema: {} },
+  ]);
+  assert.deepEqual(toolDefinitions(payload, []), []);
 });
 
 test("malformed native checkpoints fail closed while ordinary Pi checkpoints are ignored", () => {

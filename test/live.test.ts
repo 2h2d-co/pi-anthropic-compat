@@ -531,3 +531,82 @@ for (const keepRecentTokens of [0, 1]) {
     },
   );
 }
+
+test(
+  "live claude-sonnet-5-5 continues after full-history compaction records a tool removal",
+  {
+    skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+    timeout: 180000,
+  },
+  async (t) => {
+    const lookup = defineTool({
+      name: "lookup_value",
+      label: "Lookup",
+      description: "Look up a stored value by key.",
+      parameters: Type.Object({ key: Type.String() }),
+      async execute() {
+        return { content: [{ type: "text", text: "unused" }], details: {} };
+      },
+    });
+    const retired = defineTool({
+      name: "retired_report",
+      label: "Retired report",
+      description: "Report a value. Withdrawn during the conversation.",
+      parameters: Type.Object({ value: Type.String() }),
+      async execute() {
+        return { content: [{ type: "text", text: "unused" }], details: {} };
+      },
+    });
+    const { session, manager, requests } = await liveSession(t, "claude-sonnet-5-5", {
+      customTools: [lookup, retired],
+      keepRecentTokens: 0,
+    });
+    await session.prompt(
+      "Remember these synthetic project facts: project Lantern, port 4317. Reply with only OK. Do not use tools.",
+    );
+    // Pi withdraws the tool with a removal in the conversation and keeps the first `tools` list.
+    session.setActiveToolsByName(
+      session.getActiveToolNames().filter((name) => name !== retired.name),
+    );
+    await session.prompt("Reply with only OK. Do not use tools.");
+    await session.compact("Preserve the exact synthetic project facts.");
+    assert.ok(requests.at(-1)?.["compaction"]);
+    const saved = activeCheckpoint(manager.getBranch());
+    assert.ok(saved);
+    // Anthropic records the removal's net effect in the signed block.
+    assert.deepEqual(
+      objects(saved.block["tool_changes"]).map((change) => [
+        change["type"],
+        object(change["tool"])["name"],
+      ]),
+      [["tool_removal", retired.name]],
+    );
+
+    await session.prompt(
+      "Return only JSON with project and port (number) from the earlier project facts. Do not use tools.",
+    );
+    const last = session.messages.at(-1);
+    assert.ok(
+      last?.role === "assistant" && last.stopReason === "stop",
+      "Expected a successful continuation.",
+    );
+    // The replayed request declares the removed tool again so the block can remove it.
+    assert.equal(
+      objects(requests.at(-1)?.["tools"]).filter((tool) => tool["name"] === retired.name).length,
+      1,
+    );
+    const text = last.content
+      .filter((item) => item.type === "text")
+      .map((item) => item.text)
+      .join("")
+      .trim()
+      .replace(/^```(?:json)?\s*/, "")
+      .replace(/\s*```$/, "");
+    const result = object(JSON.parse(text));
+    assertProjectLantern(result["project"]);
+    assert.equal(result["port"], 4317);
+    t.diagnostic(
+      "claude-sonnet-5-5 continued after full-history compaction recorded a tool removal in the signed block.",
+    );
+  },
+);
