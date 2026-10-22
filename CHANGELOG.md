@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.15] - 2026-10-22
+
 ### Fixed
 
 - A session no longer fails every request after compaction with "tool_addition/tool_removal
