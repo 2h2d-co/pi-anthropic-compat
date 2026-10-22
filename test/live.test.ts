@@ -22,6 +22,7 @@ import extension from "../extensions/index.ts";
 import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
 import { activeCheckpoint } from "../extensions/anthropic-compat/runtime.ts";
 import { messageHash } from "../extensions/anthropic-compat/tail.ts";
+import { COMPACTION_CANCELLED_CHANNEL } from "../extensions/anthropic-compat/protocol.ts";
 import { errorLog } from "./support/error-log.ts";
 import { isolatePromptPatcher } from "./support/prompt-patcher.ts";
 
@@ -42,6 +43,8 @@ async function liveSession(
     codemode?: "on" | "only";
     customTools?: ToolDefinition[];
     keepRecentTokens?: number;
+    /** Collect the payloads published on the compaction-cancelled channel. */
+    cancellations?: unknown[];
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "anthropic-live-"));
@@ -132,6 +135,10 @@ async function liveSession(
           output_config: { effort: "low" },
         })),
       ...(options.codemode ? [createCodemodeExtension()] : []),
+      (pi) =>
+        pi.events.on(COMPACTION_CANCELLED_CHANNEL, (data) => {
+          options.cancellations?.push(data);
+        }),
     ],
   });
   await loader.reload();
@@ -608,5 +615,38 @@ test(
     t.diagnostic(
       "claude-sonnet-5-5 continued after full-history compaction recorded a tool removal in the signed block.",
     );
+  },
+);
+
+test(
+  "live claude-sonnet-5-5 publishes why native compaction was cancelled",
+  {
+    skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+    timeout: 180000,
+  },
+  async (t) => {
+    const cancellations: unknown[] = [];
+    // No recorded request leaves this much recent history, so compaction cancels before any
+    // summary request.
+    const { session, requests } = await liveSession(t, "claude-sonnet-5-5", {
+      keepRecentTokens: 200_000,
+      cancellations,
+    });
+    await session.prompt("Reply with only OK. Do not use tools.");
+    const turn = session.messages.at(-1);
+    assert.ok(turn?.role === "assistant" && turn.stopReason === "stop", "The turn must succeed.");
+    await assert.rejects(session.compact(), { message: "Compaction cancelled" });
+    assert.equal(
+      requests.some((request) => request["compaction"]),
+      false,
+    );
+    assert.deepEqual(cancellations, [
+      {
+        source: "pi-anthropic-compat",
+        reason:
+          "No recorded safe boundary satisfies native tail retention. History was preserved. Run more Anthropic turns or lower Native tail tokens.",
+      },
+    ]);
+    t.diagnostic("claude-sonnet-5-5 published the reason a native compaction was cancelled.");
   },
 );

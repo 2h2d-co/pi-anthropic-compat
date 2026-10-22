@@ -181,6 +181,14 @@ cancels a pending retry. No other failure is retried. Failure messages name the
 HTTP status, Anthropic's error type, and its error code, never the provider's
 error text.
 
+Pi reports a cancelled compaction only as "Compaction cancelled". The extension
+shows its reason as an error notification and publishes it on the shared
+`pi.events` channel `compaction:cancelled` as `{ source: "pi-anthropic-compat",
+reason }`. The reason is a complete sentence without provider error text. An
+extension that requested the compaction, such as
+[`pi-compact-assistant`](https://github.com/2h2d-co/pi-compact-assistant), can
+pass it on to the model.
+
 Compaction is billed separately. Accounting uses `usage.iterations`, not the
 top-level usage fields, which can be zero on a successful summary request.
 Failed summary requests can still incur charges.

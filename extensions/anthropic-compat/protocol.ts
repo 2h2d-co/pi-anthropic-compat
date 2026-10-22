@@ -8,6 +8,14 @@ export const CHECKPOINT_TYPE = "pi-anthropic-compat";
 export const TEMPLATE_TYPE = "pi-anthropic-compat-template";
 export const BOUNDARY_TYPE = "pi-anthropic-compat-boundary";
 
+/**
+ * Shared `pi.events` channel that names why an extension cancelled a compaction. Pi reports only
+ * "Compaction cancelled", so an extension that requested the compaction, such as
+ * pi-compact-assistant, reads the reason here. The payload is `{ source, reason }`, where `reason`
+ * is a complete sentence without provider error text.
+ */
+export const COMPACTION_CANCELLED_CHANNEL = "compaction:cancelled";
+
 const MODELS = new Set([
   "claude-haiku-5-5",
   "claude-fable-5-1",

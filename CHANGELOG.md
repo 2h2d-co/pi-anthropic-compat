@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Publish the reason for every cancelled native compaction on the shared `pi.events` channel
+  `compaction:cancelled` as `{ source: "pi-anthropic-compat", reason }`. Pi reports only
+  "Compaction cancelled", so extensions that request compaction, such as pi-compact-assistant,
+  can now tell the model why.
+
 ## [0.0.15] - 2026-10-22
 
 ### Fixed

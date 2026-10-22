@@ -29,6 +29,7 @@ import { object, objects, type JsonObject } from "./json.ts";
 import {
   BOUNDARY_TYPE,
   CHECKPOINT_TYPE,
+  COMPACTION_CANCELLED_CHANNEL,
   TEMPLATE_TYPE,
   checkpoint,
   eligibleModel,
@@ -541,6 +542,10 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
       const message = error instanceof Error ? error.message : "Native compaction failed.";
       // No automatic switch to a text-summary algorithm after a native failure.
       ctx.ui.notify(message, "error");
+      pi.events.emit(COMPACTION_CANCELLED_CHANNEL, {
+        source: "pi-anthropic-compat",
+        reason: message,
+      });
       return { cancel: true };
     }
   });

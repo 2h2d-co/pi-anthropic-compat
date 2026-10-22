@@ -22,7 +22,10 @@ import {
   withoutHiddenTools,
 } from "../extensions/anthropic-compat/runtime.ts";
 import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
-import { TEMPLATE_TYPE } from "../extensions/anthropic-compat/protocol.ts";
+import {
+  COMPACTION_CANCELLED_CHANNEL,
+  TEMPLATE_TYPE,
+} from "../extensions/anthropic-compat/protocol.ts";
 import { REQUEST_TYPE, bindingTemplate, fingerprint } from "../extensions/anthropic-compat/tail.ts";
 import { block, model, summaryResponse, textResponse } from "./support/fixtures.ts";
 import { SESSION_SETTINGS_TYPE } from "../extensions/anthropic-compat/settings.ts";
@@ -94,6 +97,8 @@ async function setup(
     unavailableSummaries?: number;
     /** Collect extension notifications. */
     notices?: string[];
+    /** Collect the payloads published on the compaction-cancelled channel. */
+    cancellations?: unknown[];
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "anthropic-integration-"));
@@ -206,6 +211,11 @@ async function setup(
       systemPromptOverride: () => "Synthetic system before patch.",
       extensionFactories: [
         (pi) => registerCompatibility(pi, fetcher),
+        // Another extension, such as pi-compact-assistant, reads cancellation reasons.
+        (pi) =>
+          pi.events.on(COMPACTION_CANCELLED_CHANNEL, (data) => {
+            options.cancellations?.push(data);
+          }),
         // A later-loaded system-prompt transformer must remain effective.
         (pi) =>
           pi.on("before_provider_request", (event) =>
@@ -438,6 +448,28 @@ test("native failure cancels compaction without losing history or falling back",
   assert.equal(manager.getLeafId(), leaf);
   assert.equal(activeCheckpoint(manager.getBranch()), undefined);
   assert.equal(requests.length, 2);
+});
+
+test("a cancelled compaction publishes its reason for other extensions", async (t) => {
+  const cancellations: unknown[] = [];
+  const { session } = await setup(t, { fail: true, cancellations });
+  await session.prompt("Keep these facts.");
+  // Pi reports only that the compaction was cancelled.
+  await assert.rejects(session.compact(), { message: "Compaction cancelled" });
+  assert.deepEqual(cancellations, [
+    {
+      source: "pi-anthropic-compat",
+      reason: "Native compaction produced no summary (max_tokens). History was preserved.",
+    },
+  ]);
+});
+
+test("a successful compaction publishes no cancellation", async (t) => {
+  const cancellations: unknown[] = [];
+  const { session } = await setup(t, { cancellations });
+  await session.prompt("Keep these facts.");
+  await session.compact();
+  assert.deepEqual(cancellations, []);
 });
 
 test("a transient compaction failure is retried with a warning", async (t) => {
