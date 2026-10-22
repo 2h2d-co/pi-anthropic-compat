@@ -453,3 +453,81 @@ test(
     );
   },
 );
+
+for (const keepRecentTokens of [0, 1]) {
+  test(
+    `live claude-sonnet-5-5 compacts after an interrupted tool call with keepRecentTokens=${keepRecentTokens}`,
+    {
+      skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+      timeout: 180000,
+    },
+    async (t) => {
+      const lookup = defineTool({
+        name: "lookup_value",
+        label: "Lookup",
+        description: "Look up a stored value by key.",
+        parameters: Type.Object({ key: Type.String() }),
+        async execute() {
+          return { content: [{ type: "text", text: "unused" }], details: {} };
+        },
+      });
+      const { session, manager, requests } = await liveSession(t, "claude-sonnet-5-5", {
+        customTools: [lookup],
+        keepRecentTokens,
+      });
+      await session.prompt(
+        "Remember these synthetic project facts: project Lantern, port 4317. Reply with only OK. Do not use tools.",
+      );
+      // Interrupt the next response as soon as it starts streaming a tool call, as a user
+      // pressing Escape would.
+      let abort: Promise<void> | undefined;
+      const unsubscribe = session.subscribe((event) => {
+        if (
+          !abort &&
+          event.type === "message_update" &&
+          event.assistantMessageEvent.type === "toolcall_start"
+        ) {
+          abort = session.abort();
+        }
+      });
+      await session.prompt("Call lookup_value once with key port.");
+      await abort;
+      unsubscribe();
+      const interrupted = session.messages.at(-1);
+      assert.ok(
+        interrupted?.role === "assistant" &&
+          interrupted.stopReason === "aborted" &&
+          interrupted.content.some((item) => item.type === "toolCall"),
+        "The interrupted response must keep its unanswered tool call.",
+      );
+      await session.prompt("Ignore that request. Reply with only OK. Do not use tools.");
+      await session.compact("Preserve the exact synthetic project facts.");
+      assert.ok(requests.at(-1)?.["compaction"]);
+      const saved = activeCheckpoint(manager.getBranch());
+      assert.ok(saved);
+      assert.equal(Boolean(saved.retained), keepRecentTokens > 0);
+
+      await session.prompt(
+        "Return only JSON with project and port (number) from the earlier project facts. Do not use tools.",
+      );
+      const last = session.messages.at(-1);
+      assert.ok(
+        last?.role === "assistant" && last.stopReason === "stop",
+        "Expected a successful continuation.",
+      );
+      const text = last.content
+        .filter((item) => item.type === "text")
+        .map((item) => item.text)
+        .join("")
+        .trim()
+        .replace(/^```(?:json)?\s*/, "")
+        .replace(/\s*```$/, "");
+      const result = object(JSON.parse(text));
+      assertProjectLantern(result["project"]);
+      assert.equal(result["port"], 4317);
+      t.diagnostic(
+        `claude-sonnet-5-5 compacted with keepRecentTokens=${keepRecentTokens} after an interrupted tool call and recovered the synthetic facts.`,
+      );
+    },
+  );
+}
