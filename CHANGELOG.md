@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.14] - 2026-10-22
+
 ### Fixed
 
 - Compaction no longer fails with "Resolve pending tool calls before native compaction" after
