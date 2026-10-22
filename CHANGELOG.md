@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.16] - 2026-10-22
+
 ### Added
 
 - Publish the reason for every cancelled native compaction on the shared `pi.events` channel
