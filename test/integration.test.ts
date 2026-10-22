@@ -403,6 +403,56 @@ test("native failure cancels compaction without losing history or falling back",
   assert.equal(requests.length, 2);
 });
 
+for (const keepRecentTokens of [0, 1]) {
+  test(`an interrupted tool call does not block compaction with keepRecentTokens=${keepRecentTokens}`, async (t) => {
+    const { session, manager, requests, create } = await setup(t, {
+      keepRecentTokens,
+      managed: true,
+      persistent: true,
+    });
+    await session.prompt("Remember the synthetic project Lantern.");
+    // The user interrupted a response while it streamed a tool call. Pi saves it without a result
+    // and never sends it again.
+    manager.appendMessage({
+      role: "assistant",
+      api: model.api,
+      provider: model.provider,
+      model: "claude-fable-5-1",
+      stopReason: "aborted",
+      errorMessage: "Operation aborted",
+      timestamp: Date.now(),
+      content: [
+        { type: "toolCall", id: "interrupted-call", name: "bash", arguments: { command: "true" } },
+      ],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    });
+    const file = manager.getSessionFile();
+    assert.ok(file);
+    session.dispose();
+    const restored = SessionManager.open(file);
+    const resumed = await create(restored);
+    await resumed.prompt("Continue after the interruption.");
+    await resumed.compact();
+    const saved = activeCheckpoint(restored.getBranch());
+    assert.ok(saved);
+    assert.equal(Boolean(saved.retained), keepRecentTokens > 0);
+    const summary = requests.find((request) => request["compaction"]);
+    assert.ok(summary);
+    assert.equal(JSON.stringify(summary).includes("interrupted-call"), false);
+    await resumed.prompt("Continue after compaction.");
+    const latest = requests.at(-1);
+    assert.ok(latest);
+    assert.deepEqual(objects(latest["messages"])[0], { role: "assistant", content: [block] });
+  });
+}
+
 test("a turn Pi retries without strict tools records only the accepted request", async (t) => {
   const { session, manager, requests } = await setup(t, {
     modelId: "claude-opus-5-5",

@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Compaction no longer fails with "Resolve pending tool calls before native compaction" after
+  you interrupt a response while it streams a tool call. Pi never sends such an interrupted or
+  failed response, so its unanswered tool call no longer blocks every later compaction in the
+  session.
+
 ## [0.0.13] - 2026-10-22
 
 ### Changed

@@ -197,6 +197,15 @@ test("unanswered tools cannot be compacted and completed pairs remain valid", ()
   };
   assert.throws(() => requireCompletedTools([call]), /pending tool/);
   assert.doesNotThrow(() => requireCompletedTools([call, result]));
+  // Pi never sends errored or aborted responses, so their tool calls never get a result.
+  const later: AssistantMessage = {
+    ...call,
+    content: [{ type: "toolCall", id: "later-call", name: "read", arguments: {} }],
+  };
+  for (const stopReason of ["aborted", "error"] as const) {
+    assert.doesNotThrow(() => requireCompletedTools([{ ...call, stopReason }]));
+    assert.throws(() => requireCompletedTools([{ ...call, stopReason }, later]), /pending tool/);
+  }
 });
 
 test("malformed successful provider responses never expose raw response bodies", async () => {

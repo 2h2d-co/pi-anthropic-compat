@@ -96,10 +96,16 @@ function anthropicModel(model: Model<Api>): model is Model<"anthropic-messages">
   return model.api === "anthropic-messages";
 }
 
+/**
+ * Reject tool calls that still await a result. Pi never sends an errored or aborted response,
+ * such as one the user interrupted while it streamed a tool call, so its tool calls never get a
+ * result and are skipped here as well.
+ */
 export function requireCompletedTools(messages: readonly Message[]): void {
   const pending = new Set<string>();
   for (const message of messages) {
     if (message.role === "assistant") {
+      if (message.stopReason === "error" || message.stopReason === "aborted") continue;
       for (const item of message.content) {
         if (item.type === "toolCall") pending.add(item.id);
       }
