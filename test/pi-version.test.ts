@@ -3,9 +3,9 @@ import test from "node:test";
 import { VERSION } from "@earendil-works/pi-coding-agent";
 import { atLeastVersion, requirePiVersion } from "../extensions/anthropic-compat/pi-version.ts";
 
-test("requires Pi 1.3.0 or later at load time", () => {
-  for (const version of ["1.3.0", "1.3.1", "1.4.0", "2.0.0"]) {
-    assert.equal(atLeastVersion(version, "1.3.0"), true, version);
+test("requires Pi 1.4.0 or later at load time", () => {
+  for (const version of ["1.4.0", "1.4.1", "1.5.0", "2.0.0"]) {
+    assert.equal(atLeastVersion(version, "1.4.0"), true, version);
   }
   for (const version of [
     "0.99.0",
@@ -13,18 +13,19 @@ test("requires Pi 1.3.0 or later at load time", () => {
     "1.0.4",
     "1.1.0",
     "1.2.0",
-    "1.2.9",
-    "1.3.0-rc.1",
+    "1.3.0",
+    "1.3.9",
+    "1.4.0-rc.1",
     "",
     "latest",
     undefined,
   ]) {
-    assert.equal(atLeastVersion(version, "1.3.0"), false, String(version));
+    assert.equal(atLeastVersion(version, "1.4.0"), false, String(version));
   }
   assert.doesNotThrow(() => requirePiVersion("pi-anthropic-compat", VERSION));
-  assert.throws(() => requirePiVersion("pi-anthropic-compat", "1.2.0"), {
+  assert.throws(() => requirePiVersion("pi-anthropic-compat", "1.3.0"), {
     message:
-      "pi-anthropic-compat requires Pi 1.3.0 or later, but the running Pi reports Pi 1.2.0. " +
-      "Exit Pi and start Pi 1.3.0 or later. /reload cannot upgrade the running runtime.",
+      "pi-anthropic-compat requires Pi 1.4.0 or later, but the running Pi reports Pi 1.3.0. " +
+      "Exit Pi and start Pi 1.4.0 or later. /reload cannot upgrade the running runtime.",
   });
 });

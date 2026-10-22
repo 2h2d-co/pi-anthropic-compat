@@ -2,9 +2,9 @@
 
 Native Anthropic compatibility for Pi, starting with signed on-demand compaction.
 
-Requires Pi `>=1.3.0 <1.4.0` and Node.js 22.19 or newer. Releases are
-validated against Pi 1.3.0. The extension refuses to load on a Pi older than
-1.3.0, because Pi does not enforce the package's peer range when it installs
+Requires Pi `>=1.4.0 <1.5.0` and Node.js 22.19 or newer. Releases are
+validated against Pi 1.4.0. The extension refuses to load on a Pi older than
+1.4.0, because Pi does not enforce the package's peer range when it installs
 packages.
 
 ## Install
@@ -108,7 +108,7 @@ cancels keep-tail compaction before any summary request.
 
 Pi synthesizes effort-control messages around responses from models whose
 catalog entry sets `compat.supportsMidConvoEffort`: Fable 5.1, Opus 5, Opus 5.5,
-Sonnet 5.5, and Haiku 5.5 in Pi 1.3.0. The extension
+Sonnet 5.5, and Haiku 5.5 in Pi 1.4.0. The extension
 removes only a verified duplicate boundary instruction that was already
 summarized. It preserves every instruction inside the retained range.
 
