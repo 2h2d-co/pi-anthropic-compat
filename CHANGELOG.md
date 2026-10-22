@@ -14,6 +14,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   references unknown tool" when a tool was removed before compaction. Anthropic records the
   removal in the signed summary, and the extension now declares the removed tool again so the
   summary can remove it. Sessions already compacted by 0.0.14 recover on their next request.
+- Native compaction no longer fails on Anthropic's transient HTTP 529 `compaction_unavailable`
+  error. It retries up to 3 times after 2, 4, and 8 seconds, or after the server's `retry-after`
+  delay up to 60 seconds, as Pi does for its own compaction, and shows a warning before each
+  retry.
+- Compaction failure messages now name Anthropic's error type and error code, such as
+  `HTTP 529 overloaded_error, compaction_unavailable`, instead of only the HTTP status.
 
 ## [0.0.14] - 2026-10-22
 

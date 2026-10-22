@@ -90,6 +90,10 @@ async function setup(
     strictLimit?: boolean | "compaction";
     /** The signed block the summary returns. Default: the fixture block. */
     summaryBlock?: JsonObject;
+    /** Answer this many summary requests with Anthropic's transient compaction failure. */
+    unavailableSummaries?: number;
+    /** Collect extension notifications. */
+    notices?: string[];
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "anthropic-integration-"));
@@ -109,6 +113,7 @@ async function setup(
     else process.env["PI_CODING_AGENT_DIR"] = original;
   });
   const requests: JsonObject[] = [];
+  let unavailable = 0;
   let ordinary = 0;
   let contextWindow = model.contextWindow;
   let onSummary: (() => void) | undefined;
@@ -136,6 +141,21 @@ async function setup(
     }
     if (body["compaction"]) {
       onSummary?.();
+      if ((options.unavailableSummaries ?? 0) > unavailable) {
+        unavailable++;
+        return Response.json(
+          {
+            type: "error",
+            error: {
+              type: "overloaded_error",
+              message: "Overloaded",
+              details: { error_code: "compaction_unavailable" },
+            },
+          },
+          // A zero server delay keeps the test fast.
+          { status: 529, headers: { "retry-after": "0" } },
+        );
+      }
       if (options.fail)
         return Response.json({
           ...summaryResponse(selected.id),
@@ -218,7 +238,19 @@ async function setup(
           ? { noTools: "builtin" as const, customTools: [strictTool] }
           : { noTools: "all" as const }),
     });
-    await session.bindExtensions({});
+    const notices = options.notices;
+    await session.bindExtensions(
+      notices
+        ? {
+            uiContext: {
+              ...session.extensionRunner.getUIContext(),
+              notify: (message, level) => {
+                notices.push(`${level}: ${message}`);
+              },
+            },
+          }
+        : {},
+    );
     if (options.codemode) session.setActiveToolsByName(["report", "handoff", "codemode"]);
     if (options.strictLimit) session.setActiveToolsByName(["strict_report"]);
     contextWindow = session.model?.contextWindow ?? model.contextWindow;
@@ -406,6 +438,22 @@ test("native failure cancels compaction without losing history or falling back",
   assert.equal(manager.getLeafId(), leaf);
   assert.equal(activeCheckpoint(manager.getBranch()), undefined);
   assert.equal(requests.length, 2);
+});
+
+test("a transient compaction failure is retried with a warning", async (t) => {
+  const notices: string[] = [];
+  const { session, manager, requests } = await setup(t, { unavailableSummaries: 2, notices });
+  await session.prompt("Remember the synthetic project Lantern.");
+  const result = await session.compact();
+  assert.equal(result.summary, block["content"]);
+  assert.ok(activeCheckpoint(manager.getBranch()));
+  const summaries = requests.filter((request) => request["compaction"]);
+  assert.equal(summaries.length, 3);
+  assert.equal(new Set(summaries.map((request) => JSON.stringify(request))).size, 1);
+  assert.deepEqual(notices, [
+    "warning: Native compaction failed (HTTP 529 overloaded_error, compaction_unavailable). Retrying in 0 s, attempt 1 of 3.",
+    "warning: Native compaction failed (HTTP 529 overloaded_error, compaction_unavailable). Retrying in 0 s, attempt 2 of 3.",
+  ]);
 });
 
 const removedReport: JsonObject = {

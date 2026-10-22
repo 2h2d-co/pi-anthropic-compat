@@ -168,8 +168,18 @@ an earlier branch rather than attempting native overflow recovery.
 
 Pending tool calls must have results before compaction. Empty or unsigned
 summaries, refusals, timeouts, aborted requests, unsupported responses, and
-concurrent session changes leave the original conversation intact. The
-extension does not retry billed summary requests automatically.
+concurrent session changes leave the original conversation intact.
+
+Anthropic answers a transient compaction failure with HTTP 529
+`overloaded_error`, error code `compaction_unavailable`, and documents that the
+request should be retried. The extension retries a summary request that fails
+with HTTP 529, using Pi's default compaction budget: up to 3 retries after 2,
+4, and 8 seconds, or after the server's `retry-after` delay up to 60 seconds.
+A warning announces each retry.
+The compaction timeout still bounds the whole attempt, and aborting compaction
+cancels a pending retry. No other failure is retried. Failure messages name the
+HTTP status, Anthropic's error type, and its error code, never the provider's
+error text.
 
 Compaction is billed separately. Accounting uses `usage.iterations`, not the
 top-level usage fields, which can be zero on a successful summary request.

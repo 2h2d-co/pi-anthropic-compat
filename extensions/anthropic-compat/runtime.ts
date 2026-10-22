@@ -445,6 +445,14 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
           signal,
           event.customInstructions,
           fetcher,
+          {
+            onRetry: ({ attempt, maxRetries, delayMs, reason }) => {
+              ctx.ui.notify(
+                `Native compaction failed (${reason}). Retrying in ${Math.ceil(delayMs / 1000)} s, attempt ${attempt} of ${maxRetries}.`,
+                "warning",
+              );
+            },
+          },
         );
       let raw: JsonObject;
       try {

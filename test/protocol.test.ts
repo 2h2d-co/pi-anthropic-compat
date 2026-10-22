@@ -13,10 +13,14 @@ import {
 } from "../extensions/anthropic-compat/protocol.ts";
 import { object, objects } from "../extensions/anthropic-compat/json.ts";
 import {
+  AnthropicRequestError,
+  MAX_RETRIES,
+  MAX_SERVER_DELAY_MS,
   STRICT_TOOL_LIMIT_MESSAGES,
   StrictToolLimitError,
   compactRequest,
   supportsCompaction,
+  type RetryNotice,
 } from "../extensions/anthropic-compat/client.ts";
 import { block, model, summaryResponse } from "./support/fixtures.ts";
 import { requireCompletedTools } from "../extensions/anthropic-compat/runtime.ts";
@@ -245,9 +249,154 @@ test("native HTTP calls preserve authentication without exposing response errors
       signal,
       undefined,
       () => Promise.resolve(new Response("private error body", { status: 529 })),
+      { baseDelayMs: 1 },
     ),
-    /HTTP 529/,
+    { message: "Anthropic request failed (HTTP 529). History was preserved." },
   );
+});
+
+const unavailable = () =>
+  Response.json(
+    {
+      type: "error",
+      error: {
+        type: "overloaded_error",
+        message: "private provider text",
+        details: { error_code: "compaction_unavailable" },
+      },
+    },
+    { status: 529 },
+  );
+
+function summaryCall(fetcher: typeof fetch, options: Parameters<typeof compactRequest>[5]) {
+  return compactRequest(
+    new Request("https://api.anthropic.com/v1/messages", { method: "POST", body: "{}" }),
+    4096,
+    new AbortController().signal,
+    undefined,
+    fetcher,
+    options,
+  );
+}
+
+test("transient compaction failures are retried with backoff and announced", async () => {
+  const bodies: string[] = [];
+  const notices: RetryNotice[] = [];
+  let calls = 0;
+  const result = await summaryCall(
+    async (input, init) => {
+      bodies.push(await new Request(input, init).text());
+      calls++;
+      return calls < 3 ? unavailable() : Response.json(summaryResponse());
+    },
+    { baseDelayMs: 1, onRetry: (notice) => notices.push(notice) },
+  );
+  assert.equal(result["stop_reason"], "compaction");
+  assert.equal(calls, 3);
+  // Every attempt sends the identical summary request.
+  assert.equal(new Set(bodies).size, 1);
+  assert.deepEqual(notices, [
+    {
+      attempt: 1,
+      maxRetries: MAX_RETRIES,
+      delayMs: 1,
+      reason: "HTTP 529 overloaded_error, compaction_unavailable",
+    },
+    {
+      attempt: 2,
+      maxRetries: MAX_RETRIES,
+      delayMs: 2,
+      reason: "HTTP 529 overloaded_error, compaction_unavailable",
+    },
+  ]);
+});
+
+test("compaction retries stop at Pi's default budget and name only the error identifiers", async () => {
+  let calls = 0;
+  await assert.rejects(
+    summaryCall(
+      () => {
+        calls++;
+        return Promise.resolve(unavailable());
+      },
+      { baseDelayMs: 1 },
+    ),
+    (error) => {
+      assert.ok(error instanceof AnthropicRequestError);
+      assert.equal(
+        error.message,
+        "Anthropic request failed (HTTP 529 overloaded_error, compaction_unavailable). History was preserved.",
+      );
+      return true;
+    },
+  );
+  assert.equal(calls, 1 + MAX_RETRIES);
+  // Values that are not plain identifiers may carry provider text and are left out.
+  await assert.rejects(
+    summaryCall(
+      () =>
+        Promise.resolve(
+          Response.json(
+            { error: { type: "Overloaded: private text", details: { error_code: "a b" } } },
+            { status: 500 },
+          ),
+        ),
+      { baseDelayMs: 1 },
+    ),
+    { message: "Anthropic request failed (HTTP 500). History was preserved." },
+  );
+});
+
+test("compaction retries follow retry-after within Pi's limit and only for HTTP 529", async () => {
+  const notices: RetryNotice[] = [];
+  let calls = 0;
+  await summaryCall(
+    () => {
+      calls++;
+      if (calls > 1) return Promise.resolve(Response.json(summaryResponse()));
+      const response = unavailable();
+      response.headers.set("retry-after", "0");
+      return Promise.resolve(response);
+    },
+    { baseDelayMs: 50000, onRetry: (notice) => notices.push(notice) },
+  );
+  assert.equal(notices[0]?.delayMs, 0);
+  for (const [status, retryAfter] of [
+    [529, String(MAX_SERVER_DELAY_MS / 1000 + 1)],
+    [500, null],
+    [429, null],
+  ] as const) {
+    let attempts = 0;
+    await assert.rejects(
+      summaryCall(
+        () => {
+          attempts++;
+          return Promise.resolve(
+            new Response("{}", {
+              status,
+              headers: retryAfter === null ? {} : { "retry-after": retryAfter },
+            }),
+          );
+        },
+        { baseDelayMs: 1 },
+      ),
+      new RegExp(`HTTP ${status}`),
+    );
+    assert.equal(attempts, 1, `HTTP ${status} must not be retried`);
+  }
+});
+
+test("aborting compaction cancels a pending retry", async () => {
+  const controller = new AbortController();
+  const pending = compactRequest(
+    new Request("https://api.anthropic.com/v1/messages", { method: "POST", body: "{}" }),
+    4096,
+    controller.signal,
+    undefined,
+    () => Promise.resolve(unavailable()),
+    { baseDelayMs: 60000, onRetry: () => controller.abort() },
+  );
+  await assert.rejects(pending, { name: "AbortError" });
 });
 
 test("unanswered tools cannot be compacted and completed pairs remain valid", () => {
@@ -318,17 +467,21 @@ test("strict tool limit rejections are recognized without exposing the provider 
       return true;
     });
   }
-  for (const [status, body] of [
-    [400, rejection("invalid_request_error", "prompt is too long")],
-    [400, rejection("api_error", STRICT_TOOL_LIMIT_MESSAGES[1])],
-    [400, "private non-JSON body"],
-    [413, rejection("invalid_request_error", STRICT_TOOL_LIMIT_MESSAGES[0])],
+  for (const [status, body, detail] of [
+    [400, rejection("invalid_request_error", "prompt is too long"), " invalid_request_error"],
+    [400, rejection("api_error", STRICT_TOOL_LIMIT_MESSAGES[1]), " api_error"],
+    [400, "private non-JSON body", ""],
+    [
+      413,
+      rejection("invalid_request_error", STRICT_TOOL_LIMIT_MESSAGES[0]),
+      " invalid_request_error",
+    ],
   ] as const) {
     await assert.rejects(send(status, body), (error) => {
       assert.ok(error instanceof Error && !(error instanceof StrictToolLimitError));
       assert.equal(
         error.message,
-        `Anthropic request failed (HTTP ${status}). History was preserved.`,
+        `Anthropic request failed (HTTP ${status}${detail}). History was preserved.`,
       );
       return true;
     });
