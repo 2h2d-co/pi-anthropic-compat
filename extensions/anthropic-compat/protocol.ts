@@ -88,6 +88,20 @@ export function referencedTools(block: JsonObject): string[] {
   return [...new Set(names)];
 }
 
+/** Definitions of the tools a request's messages add inline, in order. */
+function inlineDefinitions(payload: JsonObject): JsonObject[] {
+  const messages = payload["messages"];
+  return (Array.isArray(messages) ? objects(messages) : []).flatMap((message) => {
+    const content = message["content"];
+    if (!Array.isArray(content)) return [];
+    return objects(content).flatMap((block) => {
+      if (block["type"] !== "tool_addition") return [];
+      const tool = object(block["tool"]);
+      return tool["type"] === "tool_definition" ? [object(tool["definition"])] : [];
+    });
+  });
+}
+
 /**
  * Definitions of the named tools, from a request's `tools` and the tools its messages define
  * inline. A later definition of a name replaces an earlier one.
@@ -101,16 +115,7 @@ export function toolDefinitions(payload: JsonObject, names: readonly string[]): 
   };
   const tools = payload["tools"];
   if (Array.isArray(tools)) objects(tools).forEach(record);
-  const messages = payload["messages"];
-  for (const message of Array.isArray(messages) ? objects(messages) : []) {
-    const content = message["content"];
-    if (!Array.isArray(content)) continue;
-    for (const block of objects(content)) {
-      if (block["type"] !== "tool_addition") continue;
-      const tool = object(block["tool"]);
-      if (tool["type"] === "tool_definition") record(object(tool["definition"]));
-    }
-  }
+  inlineDefinitions(payload).forEach(record);
   return names.flatMap((name) => {
     const definition = found.get(name);
     return definition ? [definition] : [];
@@ -313,5 +318,9 @@ export function template(payload: JsonObject): JsonObject {
   for (const key of ["system", "tools", "thinking", "output_config"] as const) {
     if (payload[key] !== undefined) result[key] = payload[key];
   }
+  // Pi keeps `tools` fixed for models that accept tool changes mid-conversation and defines
+  // later tools inline. Their names complete the set of tools the request sent.
+  const inline = [...new Set(inlineDefinitions(payload).flatMap((tool) => toolName(tool) ?? []))];
+  if (inline.length > 0) result["inlineTools"] = inline;
   return result;
 }

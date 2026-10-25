@@ -40,6 +40,7 @@ import {
   template,
   toolDefinitions,
 } from "./protocol.ts";
+import { PROMPT_FIRST_TYPE, promptFirst, promptFirstRecorded } from "./prompt-order.ts";
 import { loadSessionConfig, registerSettings } from "./settings.ts";
 import {
   REQUEST_TYPE,
@@ -127,19 +128,25 @@ export function requireCompletedTools(messages: readonly Message[]): void {
 /**
  * Current transcript tools the last turn request did not send. Pi hides them
  * from requests in codemode `only` mode. Pi hides only current tools, and a
- * tool a turn removed is no longer current. Names compare case-insensitively,
- * because OAuth requests send Claude Code's capitalized names for Pi's tools.
+ * tool a turn removed is no longer current. A request sends the tools in its
+ * `tools` and the ones its messages define inline. Names compare
+ * case-insensitively, because OAuth requests send Claude Code's capitalized
+ * names for Pi's tools.
  */
 export function hiddenTools(
   messages: readonly Message[],
   savedTemplate: JsonObject,
 ): ReadonlySet<string> {
   const tools = savedTemplate["tools"];
-  const sent = new Set(
-    (Array.isArray(tools) ? objects(tools) : []).flatMap((tool) =>
+  const inline = savedTemplate["inlineTools"];
+  const sent = new Set([
+    ...(Array.isArray(tools) ? objects(tools) : []).flatMap((tool) =>
       typeof tool["name"] === "string" ? [tool["name"].toLowerCase()] : [],
     ),
-  );
+    ...(Array.isArray(inline) ? inline : []).flatMap((name) =>
+      typeof name === "string" ? [name.toLowerCase()] : [],
+    ),
+  ]);
   return new Set(
     getCurrentTools([...messages])
       .map((tool) => tool.name)
@@ -266,10 +273,22 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
     api: "anthropic-messages",
     streamSimple: (model, messages, options) => {
       if (!anthropicModel(model)) throw new Error("Expected Anthropic Messages API.");
+      const turn = context;
+      let request = messages;
+      // Agent turns of this session lead with the prompt. Other extensions' nested calls keep
+      // their own order.
+      if (turn && options?.sessionId === turn.sessionManager.getSessionId()) {
+        const recorded = promptFirstRecorded(turn.sessionManager.getBranch());
+        const ordered = promptFirst(messages.messages, recorded);
+        if (ordered) {
+          if (!recorded) pi.appendEntry(PROMPT_FIRST_TYPE, { version: 1 });
+          request = normalizeContext({ messages: ordered });
+        }
+      }
       // Pi can serialize a turn twice: after a strict-tool-limit rejection it retries once with
       // preferred strict tools non-strict. Only the request Anthropic accepts is recorded.
       let record: (() => void) | undefined;
-      return anthropic.streamSimple(model, messages, {
+      return anthropic.streamSimple(model, request, {
         ...options,
         onPayload: async (payload, selected) => {
           record = undefined;
@@ -346,7 +365,9 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
         saved ? active.filter((message) => message.role !== "compactionSummary") : active,
       );
       const hidden = hiddenTools(transcript, savedTemplate);
-      const messages = withoutHiddenTools(transcript, hidden);
+      const visible = withoutHiddenTools(transcript, hidden);
+      // The summary request follows the turns' prompt order, so it matches their requests.
+      const messages = promptFirst(visible, promptFirstRecorded(branch)) ?? visible;
       requireCompletedTools(messages);
       const level = pi.getThinkingLevel();
       const serializationOptions: SimpleStreamOptions = {

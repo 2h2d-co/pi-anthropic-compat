@@ -110,7 +110,10 @@ Full-history compaction is unaffected.
 Pi codemode's `only` mode hides direct tools from turn requests, but the
 transcript still declares them. Summary requests leave out every current
 transcript tool that the last turn request did not send, as its saved request
-template records, so they declare the tools the turns sent. The retained-tail
+template records, so they declare the tools the turns sent. The template lists
+the request's `tools` and the tools its messages defined inline, so a tool
+added mid-conversation stays declared and the summary request repeats the
+turns' messages unchanged. The retained-tail
 check uses the tools Pi will send after compaction, so a tool change still
 cancels keep-tail compaction before any summary request.
 
@@ -200,6 +203,30 @@ while native compaction is off, so that enabling it later can retain turns that
 already happened. It does not store a complete transcript copy for every request.
 It never stores authentication headers or logs raw provider error bodies.
 Treat session files as private conversation data.
+
+## Prompt order
+
+Pi writes the system message that declares the prompt and the initial tools
+when the first agent run starts. A `!` shell command run before the first
+prompt is already in the session, so it comes first. Pi's Anthropic provider
+then finds no leading prompt. It sends the prompt as a mid-conversation system
+message and the complete current tool list in `tools` on every request. A tool
+added or removed later, for example by an extension such as
+pi-compact-assistant, changes `tools`. That request misses the whole prompt
+cache, and Anthropic drops or, in keep-tail mode, rejects the signed thinking
+of earlier responses. Keep-tail compaction also cancels in such sessions,
+because the turns' prompt and tools differ from the snapshot Pi leads with
+after compaction.
+
+The extension moves that system message ahead of the shell output in every
+Anthropic request of the session, whether native compaction is on or off. Pi
+then sends the prompt in `system`, keeps `tools` fixed, and defines later tools
+inline. The session records the move with a `pi-anthropic-compat-prompt-first`
+entry, so later requests and summary requests keep the same order.
+
+Sessions that already received a response in the original order keep it until
+their next compaction, because moving the prompt would invalidate that
+response's thinking. Compaction leads the context with the prompt again.
 
 ## Settings
 
@@ -319,6 +346,12 @@ Low effort can omit thinking on simple tasks, so the fixture includes a
 multi-step arithmetic problem. A response without thinking fails the test.
 A Sonnet 5.5 test adds a tool mid-conversation, which Pi sends as an inline tool
 definition, compacts the full history, and requires a call to the added tool afterwards.
+Three Sonnet 5.5 tests run a shell command before the first prompt. A control without
+the extension adds a tool after a thinking turn and requires a prompt-cache miss. Sending
+that request again with thinking-prefix enforcement must then be rejected. With the extension, the same steps
+must read the whole earlier prompt from the cache, enforced replay must succeed, and the
+summary request must repeat the turns with the inline tool. A keep-tail test must retain
+the signed thinking of the turn after the shell command.
 
 The CLI tests use `PI_PACKAGE_ARCHIVE` when supplied and otherwise pack the
 extension locally. Each loads the archive through the shipped Pi executable in
@@ -332,7 +365,8 @@ requires the selected Pi to match the repository's Pi development dependency.
 `PI_ANTHROPIC_CLI_PATH` selects another `cli.js` to test; the default is the
 repository's Pi dependency.
 The CLI tests run Opus 5.5, Sonnet 5.5, and Haiku 5.5, each with full-history and
-retained-message compaction. Fable 5.1 runs only in the SDK test, because Pi AI handles its
+retained-message compaction. One more Sonnet 5.5 run starts with a shell command and
+requires retained-message compaction to succeed. Fable 5.1 runs only in the SDK test, because Pi AI handles its
 requests like those three models. The default test suite and CI skip live tests.
 Anthropic live runs keep normal tools, extensions, capabilities, and resource
 loading enabled. Test state and prompt-patcher rules are isolated without

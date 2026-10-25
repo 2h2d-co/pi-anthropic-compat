@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,13 +18,17 @@ import {
   SettingsManager,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "@earendil-works/pi-ai";
+import { Type, type AssistantMessage } from "@earendil-works/pi-ai";
 import extension from "../extensions/index.ts";
 import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
 import { activeCheckpoint } from "../extensions/anthropic-compat/runtime.ts";
-import { messageHash } from "../extensions/anthropic-compat/tail.ts";
-import { COMPACTION_CANCELLED_CHANNEL } from "../extensions/anthropic-compat/protocol.ts";
-import { errorLog } from "./support/error-log.ts";
+import { fingerprint, isEffortMessage, messageHash } from "../extensions/anthropic-compat/tail.ts";
+import {
+  COMPACTION_CANCELLED_CHANNEL,
+  THINKING_BINDING_BETA,
+} from "../extensions/anthropic-compat/protocol.ts";
+import { PROMPT_FIRST_TYPE } from "../extensions/anthropic-compat/prompt-order.ts";
+import { describeFailure, errorLog } from "./support/error-log.ts";
 import { isolatePromptPatcher } from "./support/prompt-patcher.ts";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -45,8 +50,11 @@ async function liveSession(
     keepRecentTokens?: number;
     /** Collect the payloads published on the compaction-cancelled channel. */
     cancellations?: unknown[];
+    /** Load this extension. Without it, Pi's own Anthropic provider serves the session. */
+    compat?: boolean;
   } = {},
 ) {
+  const compat = options.compat ?? true;
   const root = await mkdtemp(join(tmpdir(), "anthropic-live-"));
   const agentDir = join(root, "agent");
   await mkdir(agentDir);
@@ -103,7 +111,7 @@ async function liveSession(
         assert.equal(body["model"], modelId);
         assert.equal(object(body["output_config"])["effort"], "low");
         // Thinking-prefix enforcement applies only when compaction retains recent messages.
-        if ((options.keepRecentTokens ?? 1) > 0) {
+        if (compat && (options.keepRecentTokens ?? 1) > 0) {
           assert.equal(
             object(object(body["thinking"])["block_binding"])["prefix_mismatch_behavior"],
             "error",
@@ -127,7 +135,7 @@ async function liveSession(
     settingsManager: settings,
     additionalExtensionPaths: [patcher],
     extensionFactories: [
-      extension,
+      ...(compat ? [extension] : []),
       (pi) =>
         pi.on("before_provider_request", (event) => ({
           ...object(event.payload),
@@ -648,5 +656,281 @@ test(
       },
     ]);
     t.diagnostic("claude-sonnet-5-5 published the reason a native compaction was cancelled.");
+  },
+);
+
+/**
+ * A shell command run before the first prompt comes first in Pi's transcript, ahead of the system
+ * message that declares the prompt and tools. These scenarios run one, then change the tools,
+ * which is the path where Pi's own Anthropic provider loses the prompt cache and earlier thinking.
+ */
+const SHELL_FIRST_PROMPT =
+  "The shell output above names a synthetic project. Remember its name. Then solve this verification problem carefully: find the smallest positive integer n such that n mod 17 = 12, n mod 19 = 8, n mod 23 = 14, and n mod 29 = 7. Check all four congruences before answering. Reply with n and the four checked remainders. Do not use tools.";
+
+async function runShellCommand(session: Awaited<ReturnType<typeof liveSession>>["session"]) {
+  // The run ID keeps earlier test runs' caches from matching after the shell output.
+  const result = await session.executeBash(
+    `printf 'Synthetic shell output for run %s: project Lantern\\n' ${randomUUID()}`,
+  );
+  assert.equal(result.exitCode, 0);
+}
+
+function lastResponse(
+  session: Awaited<ReturnType<typeof liveSession>>["session"],
+  turn: string,
+): AssistantMessage {
+  const message = session.messages.at(-1);
+  assert.ok(message?.role === "assistant", `The ${turn} turn must end with a response.`);
+  assert.equal(message.stopReason, "stop", describeFailure(message));
+  return message;
+}
+
+function signedThinking(message: AssistantMessage): boolean {
+  return message.content.some(
+    (item) => item.type === "thinking" && Boolean(item.thinkingSignature),
+  );
+}
+
+/** Tokens the request read from or wrote to the prompt cache, so the cached prefix it leaves. */
+function cachedPrefix(message: AssistantMessage): number {
+  return message.usage.cacheRead + message.usage.cacheWrite;
+}
+
+/** A system message that carries prompt text, rather than one of Pi's effort markers. */
+function promptMessages(request: JsonObject): JsonObject[] {
+  return objects(request["messages"]).filter(
+    (message) => message["role"] === "system" && !isEffortMessage(message),
+  );
+}
+
+function inlineTools(request: JsonObject): unknown[] {
+  return objects(request["messages"]).flatMap((message) =>
+    objects(message["content"]).flatMap((item) => {
+      if (item["type"] !== "tool_addition") return [];
+      const tool = object(item["tool"]);
+      return tool["type"] === "tool_definition" ? [object(tool["definition"])["name"]] : [];
+    }),
+  );
+}
+
+/**
+ * Send a turn request again without streaming, with Anthropic's thinking-prefix check enforced.
+ * Anthropic accepts it only when every replayed thinking block still follows the prefix it was
+ * generated after. Only the status and error category are inspected.
+ */
+async function enforcedReplay(send: typeof fetch, request: Request): Promise<Response> {
+  const body = object(await request.clone().json());
+  const headers = new Headers(request.headers);
+  headers.delete("content-length");
+  headers.set(
+    "anthropic-beta",
+    [headers.get("anthropic-beta"), THINKING_BINDING_BETA].filter(Boolean).join(","),
+  );
+  return send(request.url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      ...body,
+      stream: false,
+      thinking: {
+        ...object(body["thinking"]),
+        block_binding: { prefix_mismatch_behavior: "error" },
+      },
+    }),
+    signal: AbortSignal.timeout(60000),
+    redirect: "error",
+  });
+}
+
+/**
+ * Run a shell command, a thinking turn, then a turn after `recall_code` was added. Pi's
+ * mid-conversation tool changes define the tool inline only while `tools` stays fixed.
+ */
+async function shellFirstToolChange(t: TestContext, compat: boolean) {
+  const recalled: string[] = [];
+  const recall = defineTool({
+    name: "recall_code",
+    label: "Recall",
+    description: "Return the synthetic verification code for a project.",
+    parameters: Type.Object({ project: Type.String() }),
+    async execute(_id, params) {
+      recalled.push(params.project);
+      return { content: [{ type: "text", text: "Verification code: 7341" }], details: {} };
+    },
+  });
+  const live = await liveSession(t, "claude-sonnet-5-5", {
+    customTools: [recall],
+    keepRecentTokens: 0,
+    compat,
+  });
+  const { session, requests } = live;
+  const initialToolNames = session.getActiveToolNames().filter((name) => name !== recall.name);
+  session.setActiveToolsByName(initialToolNames);
+  await runShellCommand(session);
+  await session.prompt(SHELL_FIRST_PROMPT);
+  const first = lastResponse(session, "first");
+  assert.ok(
+    signedThinking(first),
+    "Actual signed thinking is required. A successful response without thinking proves nothing.",
+  );
+  assert.ok(first.usage.cacheWrite > 0, "The first request must write the prompt cache.");
+  const firstRequest = requests.at(-1);
+  assert.ok(firstRequest);
+
+  session.setActiveToolsByName([...initialToolNames, recall.name]);
+  await session.prompt("Reply with only OK. Do not use tools.");
+  const second = lastResponse(session, "second");
+  const secondRequest = requests.at(-1);
+  assert.ok(secondRequest && secondRequest !== firstRequest);
+  const continuation = live.continuation();
+  assert.ok(continuation);
+  return { ...live, recall, recalled, first, firstRequest, second, secondRequest, continuation };
+}
+
+test(
+  "live claude-sonnet-5-5 control: Pi's own provider loses the prompt cache and thinking at a tool change after a shell command before the first prompt",
+  {
+    skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+    timeout: 180000,
+  },
+  async (t) => {
+    const run = await shellFirstToolChange(t, false);
+    // Pi sends the prompt inside the conversation and the current tools in `tools`.
+    assert.equal(promptMessages(run.firstRequest).length, 1);
+    assert.notDeepEqual(run.secondRequest["tools"], run.firstRequest["tools"]);
+    assert.ok(
+      run.second.usage.cacheRead < cachedPrefix(run.first),
+      `The control must miss the prompt cache: read ${run.second.usage.cacheRead} of ${cachedPrefix(run.first)} cached tokens.`,
+    );
+    const replay = await enforcedReplay(run.send, run.continuation);
+    assert.equal(replay.status, 400, "Enforced replay must reject the dropped thinking.");
+    const error = object(object(await replay.json())["error"]);
+    assert.equal(error["type"], "invalid_request_error");
+    assert.ok(
+      typeof error["message"] === "string" &&
+        /thinking/i.test(error["message"]) &&
+        /prefix|conversation/i.test(error["message"]),
+      "The rejection must come from the thinking-prefix check, not an unrelated validation.",
+    );
+    t.diagnostic(
+      `Control without the extension: the tool change read ${run.second.usage.cacheRead} of ${cachedPrefix(run.first)} cached tokens, and enforced replay rejected the earlier thinking.`,
+    );
+  },
+);
+
+test(
+  "live claude-sonnet-5-5 keeps the prompt cache and thinking across a tool change after a shell command before the first prompt",
+  {
+    skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+    timeout: 180000,
+  },
+  async (t) => {
+    const run = await shellFirstToolChange(t, true);
+    assert.equal(promptMessages(run.firstRequest).length, 0, "The prompt must lead in `system`.");
+    assert.equal(
+      objects(run.firstRequest["tools"]).at(-1)?.["name"],
+      "__pi_deferred_placeholder__",
+    );
+    assert.deepEqual(run.secondRequest["tools"], run.firstRequest["tools"]);
+    assert.deepEqual(inlineTools(run.secondRequest), [run.recall.name]);
+    assert.ok(
+      run.second.usage.cacheRead >= cachedPrefix(run.first),
+      `The tool change must keep the prompt cache: read ${run.second.usage.cacheRead} of ${cachedPrefix(run.first)} cached tokens.`,
+    );
+    const replay = await enforcedReplay(run.send, run.continuation);
+    assert.equal(replay.status, 200, "Enforced replay must accept the earlier thinking.");
+    await replay.body?.cancel();
+    assert.equal(
+      run.manager
+        .getBranch()
+        .filter((entry) => entry.type === "custom" && entry.customType === PROMPT_FIRST_TYPE)
+        .length,
+      1,
+    );
+
+    await run.session.compact("Preserve the synthetic project name.");
+    // The summary request repeats the turns, including the inline tool, so it shares their prefix.
+    const summary = run.requests.at(-1);
+    assert.ok(summary?.["compaction"]);
+    assert.equal(
+      fingerprint(summary["system"] ?? null),
+      fingerprint(run.secondRequest["system"] ?? null),
+      "The summary request must send the turns' system prompt.",
+    );
+    assert.deepEqual(summary["tools"], run.secondRequest["tools"]);
+    const turns = objects(run.secondRequest["messages"]);
+    assert.equal(
+      messageHash(objects(summary["messages"]).slice(0, turns.length)),
+      messageHash(turns),
+      "The summary request must start with the last turn's messages.",
+    );
+    await run.session.prompt(
+      "Call recall_code once with the project name from the shell output, then reply with only the verification code it returns.",
+    );
+    const last = lastResponse(run.session, "continuation");
+    assert.equal(run.recalled.length, 1, "Expected exactly one recall_code call.");
+    assertProjectLantern(run.recalled[0]);
+    assert.match(
+      last.content
+        .filter((item) => item.type === "text")
+        .map((item) => item.text)
+        .join(""),
+      /7341/,
+    );
+    t.diagnostic(
+      `The tool change read ${run.second.usage.cacheRead} of ${cachedPrefix(run.first)} cached tokens, enforced replay accepted the earlier thinking, and the summary request repeated the turns with the inline tool.`,
+    );
+  },
+);
+
+test(
+  "live claude-sonnet-5-5 keep-tail compaction retains signed thinking after a shell command before the first prompt",
+  {
+    skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+    timeout: 180000,
+  },
+  async (t) => {
+    const { session, manager, requests } = await liveSession(t, "claude-sonnet-5-5", {
+      keepRecentTokens: 1,
+    });
+    await runShellCommand(session);
+    await session.prompt(SHELL_FIRST_PROMPT);
+    const first = lastResponse(session, "first");
+    assert.ok(
+      signedThinking(first),
+      "Actual signed thinking is required. A successful response without thinking proves nothing.",
+    );
+    const turn = requests.at(-1);
+    assert.ok(turn);
+    assert.equal(promptMessages(turn).length, 0, "The prompt must lead in `system`.");
+
+    await session.compact("Preserve the synthetic project name.");
+    const saved = activeCheckpoint(manager.getBranch());
+    assert.ok(saved?.retained, "Keep-tail compaction must retain the recent response.");
+    assert.ok(
+      saved.retained.messages.some((message) =>
+        objects(message["content"]).some(
+          (item) =>
+            item["type"] === "thinking" &&
+            typeof item["signature"] === "string" &&
+            item["signature"].length > 0,
+        ),
+      ),
+      "The retained native tail must contain the original thinking.",
+    );
+    await session.prompt(
+      "Reply with only the synthetic project name from the shell output. Do not use tools.",
+    );
+    const last = lastResponse(session, "continuation");
+    assert.match(
+      last.content
+        .filter((item) => item.type === "text")
+        .map((item) => item.text)
+        .join(""),
+      /Lantern/i,
+    );
+    t.diagnostic(
+      "claude-sonnet-5-5 retained signed thinking through keep-tail compaction after a shell command before the first prompt.",
+    );
   },
 );

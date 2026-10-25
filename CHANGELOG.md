@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A session that starts with a `!` shell command no longer loses its prompt cache and the
+  thinking of earlier responses when a tool is added or removed, for example when
+  pi-compact-assistant adds `compact`. Pi puts that command ahead of the prompt, so its Anthropic
+  provider sent the prompt inside the conversation and the full tool list in `tools` on every
+  request. The extension now moves the prompt first, and Pi keeps `tools` fixed and defines later
+  tools inline. Keep-tail compaction no longer cancels in such sessions. Sessions that already
+  received a response keep their order until their next compaction.
+- The native summary request no longer drops a tool added mid-conversation. It treated the tool
+  as hidden because it was missing from the request's `tools`, so the summary request diverged
+  from the turns at that point.
+
 ## [0.0.16] - 2026-10-22
 
 ### Added

@@ -14,6 +14,7 @@ type RpcClientModule =
 import { object } from "../extensions/anthropic-compat/json.ts";
 import { CHECKPOINT_TYPE } from "../extensions/anthropic-compat/protocol.ts";
 import { REQUEST_TYPE } from "../extensions/anthropic-compat/tail.ts";
+import { PROMPT_FIRST_TYPE } from "../extensions/anthropic-compat/prompt-order.ts";
 import { describeFailure, errorLog } from "./support/error-log.ts";
 import { archiveEntries, packageArchive } from "./support/package-archive.ts";
 import { isolatePromptPatcher } from "./support/prompt-patcher.ts";
@@ -63,6 +64,9 @@ const scenarios = [
   // sessions compact the full history even when retention is configured.
   { modelId: "claude-sonnet-5-5", keepRecentTokens: 0, strictLimit: true },
   { modelId: "claude-sonnet-5-5", keepRecentTokens: 1, strictLimit: true },
+  // A shell command before the first prompt comes first in Pi's transcript. The extension moves
+  // the prompt ahead of it, so keep-tail compaction finds the turns' prompt and tools unchanged.
+  { modelId: "claude-sonnet-5-5", keepRecentTokens: 1, strictLimit: false, shellFirst: true },
 ];
 const STRICT_FIXTURE_TOOLS = 21;
 const STRICT_FIXTURE = `export default function (pi) {
@@ -83,9 +87,10 @@ const STRICT_FIXTURE = `export default function (pi) {
   }
 }
 `;
-for (const { modelId, keepRecentTokens, strictLimit } of scenarios) {
+for (const { modelId, keepRecentTokens, strictLimit, shellFirst = false } of scenarios) {
+  const variant = `keepRecentTokens=${keepRecentTokens}${strictLimit ? ", strict tool limit" : ""}${shellFirst ? ", shell command first" : ""}`;
   test(
-    `live packaged Pi CLI ${modelId} compaction, replay, and resume (keepRecentTokens=${keepRecentTokens}${strictLimit ? ", strict tool limit" : ""})`,
+    `live packaged Pi CLI ${modelId} compaction, replay, and resume (${variant})`,
     { skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1", timeout: 300_000 },
     async (t) => {
       const temporary = await mkdtemp(join(tmpdir(), "anthropic-packaged-cli-"));
@@ -216,6 +221,10 @@ for (const { modelId, keepRecentTokens, strictLimit } of scenarios) {
       }
 
       await writeFile(join(temporary, "facts.txt"), `${FACTS}\n`);
+      if (shellFirst) {
+        const shell = await client.bash("printf 'Synthetic shell output: project Lantern\\n'");
+        assert.equal(shell.exitCode, 0);
+      }
       await turn(READ_FACTS, /OK/i);
       const before = await client.getEntries();
       assert.ok(
@@ -261,6 +270,11 @@ for (const { modelId, keepRecentTokens, strictLimit } of scenarios) {
         keepRecentTokens > 0 && !strictLimit,
       );
       assert.ok(checkpoint.systemMessage, "Pi 0.86 records the prompt snapshot on the entry.");
+      assert.equal(
+        entries.filter((entry) => entry.type === "custom" && entry.customType === PROMPT_FIRST_TYPE)
+          .length,
+        shellFirst ? 1 : 0,
+      );
       await turn("Reply with only the port number from the project facts.", /4317/);
       await client.stop();
 
@@ -280,7 +294,7 @@ for (const { modelId, keepRecentTokens, strictLimit } of scenarios) {
       );
       await client.stop();
       t.diagnostic(
-        `Pi ${piVersion} loaded the packaged extension for ${modelId}: native compaction, signed replay, and resume passed (keepRecentTokens=${keepRecentTokens}${strictLimit ? ", strict tool limit" : ""}).`,
+        `Pi ${piVersion} loaded the packaged extension for ${modelId}: native compaction, signed replay, and resume passed (${variant}).`,
       );
     },
   );

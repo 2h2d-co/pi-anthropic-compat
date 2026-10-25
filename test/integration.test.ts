@@ -11,6 +11,7 @@ import {
   ModelRuntime,
   SessionManager,
   SettingsManager,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, Type, type Message } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
@@ -26,7 +27,13 @@ import {
   COMPACTION_CANCELLED_CHANNEL,
   TEMPLATE_TYPE,
 } from "../extensions/anthropic-compat/protocol.ts";
-import { REQUEST_TYPE, bindingTemplate, fingerprint } from "../extensions/anthropic-compat/tail.ts";
+import {
+  REQUEST_TYPE,
+  bindingTemplate,
+  fingerprint,
+  messageHash,
+} from "../extensions/anthropic-compat/tail.ts";
+import { PROMPT_FIRST_TYPE } from "../extensions/anthropic-compat/prompt-order.ts";
 import { block, model, summaryResponse, textResponse } from "./support/fixtures.ts";
 import { SESSION_SETTINGS_TYPE } from "../extensions/anthropic-compat/settings.ts";
 import { DEFAULT_CONFIG } from "../extensions/anthropic-compat/config.ts";
@@ -91,6 +98,8 @@ async function setup(
      * only summary requests.
      */
     strictLimit?: boolean | "compaction";
+    /** Offer these tools instead of none. */
+    customTools?: ToolDefinition[];
     /** The signed block the summary returns. Default: the fixture block. */
     summaryBlock?: JsonObject;
     /** Answer this many summary requests with Anthropic's transient compaction failure. */
@@ -246,7 +255,9 @@ async function setup(
         ? { noTools: "builtin" as const, customTools: [reportTool, handoffTool] }
         : options.strictLimit
           ? { noTools: "builtin" as const, customTools: [strictTool] }
-          : { noTools: "all" as const }),
+          : options.customTools
+            ? { noTools: "builtin" as const, customTools: options.customTools }
+            : { noTools: "all" as const }),
     });
     const notices = options.notices;
     await session.bindExtensions(
@@ -759,6 +770,126 @@ test("keep-tail compaction preserves thinking, survives cold resume, and compact
   assert.equal(JSON.stringify(requests.at(-1)).includes("test-signature"), false);
 });
 
+const noteTool = defineTool({
+  name: "note",
+  label: "Note",
+  description: "Record a note.",
+  parameters: Type.Object({ text: Type.String() }),
+  execute,
+});
+const shellResult = {
+  output: "Synthetic shell output: project Lantern.\n",
+  exitCode: 0,
+  cancelled: false,
+  truncated: false,
+};
+const names = (request: JsonObject | undefined) =>
+  objects(request?.["tools"]).map((tool) => tool["name"]);
+const inlineTools = (request: JsonObject | undefined) =>
+  objects(request?.["messages"]).flatMap((message) =>
+    objects(message["content"]).flatMap((item) => {
+      if (item["type"] !== "tool_addition") return [];
+      const tool = object(item["tool"]);
+      return tool["type"] === "tool_definition" ? [object(tool["definition"])["name"]] : [];
+    }),
+  );
+const promptFirstEntries = (manager: SessionManager) =>
+  manager
+    .getBranch()
+    .filter((entry) => entry.type === "custom" && entry.customType === PROMPT_FIRST_TYPE);
+
+test("a shell command before the first prompt keeps the prompt and initial tools leading every request", async (t) => {
+  const { session, manager, requests } = await setup(t, {
+    modelId: "claude-opus-5-5",
+    managed: true,
+    patchSystem: false,
+    customTools: [reportTool, noteTool],
+  });
+  session.setActiveToolsByName(["report"]);
+  session.recordBashResult("printf Lantern", shellResult);
+  await session.prompt("Remember the synthetic project Lantern.");
+  const first = requests.at(-1);
+  assert.ok(first);
+  assert.match(JSON.stringify(first["system"]), /Synthetic system before patch/);
+  assert.match(JSON.stringify(objects(first["messages"])[0]), /Synthetic shell output/);
+  // Pi's placeholder shows it keeps `tools` fixed and defines later tools inline.
+  assert.deepEqual(names(first), ["report", "__pi_deferred_placeholder__"]);
+
+  session.setActiveToolsByName(["report", "note"]);
+  await session.prompt("Continue.");
+  const second = requests.at(-1);
+  assert.ok(second);
+  assert.deepEqual(second["system"], first["system"]);
+  assert.deepEqual(second["tools"], first["tools"]);
+  assert.deepEqual(inlineTools(second), ["note"]);
+  const sent = objects(first["messages"]);
+  assert.equal(
+    messageHash(objects(second["messages"]).slice(0, sent.length)),
+    messageHash(sent),
+    "The earlier request must stay an unchanged prefix.",
+  );
+  assert.equal(promptFirstEntries(manager).length, 1);
+
+  await session.compact();
+  const summary = requests.at(-1);
+  assert.ok(summary?.["compaction"]);
+  assert.deepEqual(summary["system"], first["system"]);
+  assert.deepEqual(summary["tools"], first["tools"]);
+  const turns = objects(second["messages"]);
+  assert.equal(
+    messageHash(objects(summary["messages"]).slice(0, turns.length)),
+    messageHash(turns),
+    "The summary request must share the turns' prefix, including the inline tool.",
+  );
+});
+
+test("keep-tail compaction retains recent messages after a shell command before the first prompt", async (t) => {
+  const { session, manager } = await setup(t, {
+    modelId: "claude-opus-5-5",
+    managed: true,
+    patchSystem: false,
+    keepRecentTokens: 1,
+    customTools: [reportTool],
+  });
+  session.recordBashResult("printf Lantern", shellResult);
+  await session.prompt("Older facts.");
+  await session.prompt("Recent facts.");
+  await session.compact();
+  assert.ok(activeCheckpoint(manager.getBranch())?.retained);
+});
+
+test("a session answered before the prompt moved keeps its original order", async (t) => {
+  const { session, requests, create } = await setup(t, {
+    modelId: "claude-opus-5-5",
+    managed: true,
+    patchSystem: false,
+    customTools: [reportTool],
+  });
+  await session.prompt("Remember the synthetic project Lantern.");
+  // Rebuild the session as an earlier version left it: the shell output first, then a response
+  // bound to that order, and no record of a move.
+  const earlier = SessionManager.inMemory(session.sessionManager.getCwd());
+  earlier.appendMessage({
+    role: "bashExecution",
+    command: "printf Lantern",
+    ...shellResult,
+    timestamp: 1,
+  });
+  for (const message of session.messages) {
+    if (message.role === "branchSummary" || message.role === "compactionSummary") continue;
+    earlier.appendMessage(message);
+  }
+  const resumed = await create(earlier);
+  await resumed.prompt("Continue.");
+  const request = requests.at(-1);
+  assert.ok(request);
+  assert.match(JSON.stringify(objects(request["messages"])[0]), /Synthetic shell output/);
+  // The prompt stays a mid-conversation system message.
+  assert.equal(request["system"], undefined);
+  assert.match(JSON.stringify(request["messages"]), /Synthetic system before patch/);
+  assert.equal(promptFirstEntries(earlier).length, 0);
+});
+
 test("tail retention cancels without a qualifying recorded boundary and never falls back to full history", async (t) => {
   const { session, manager, requests } = await setup(t, { keepRecentTokens: 200000 });
   await session.prompt("A short conversation.");
@@ -1063,4 +1194,34 @@ test("hidden tools are the current transcript tools the last turn did not send",
     ["read", "codemode", "codemode"],
   );
   assert.equal(withoutHiddenTools(messages, new Set()).length, messages.length);
+  // A tool the request defined inline was sent.
+  assert.deepEqual([...hiddenTools(messages, { ...sent, inlineTools: ["report"] })], []);
+});
+
+test("the summary request keeps a tool added inline, so it shares the turns' prefix", async (t) => {
+  const { session, manager, requests } = await setup(t, {
+    modelId: "claude-opus-5-5",
+    managed: true,
+    customTools: [reportTool, noteTool],
+  });
+  session.setActiveToolsByName(["report"]);
+  await session.prompt("Remember the synthetic project Lantern.");
+  session.setActiveToolsByName(["report", "note"]);
+  await session.prompt("Continue.");
+  const turn = requests.at(-1);
+  assert.ok(turn);
+  assert.deepEqual(inlineTools(turn), ["note"]);
+  assert.deepEqual(activeTemplate(manager.getBranch(), "claude-opus-5-5")?.["inlineTools"], [
+    "note",
+  ]);
+  await session.compact();
+  const summary = requests.at(-1);
+  assert.ok(summary?.["compaction"]);
+  assert.deepEqual(inlineTools(summary), ["note"]);
+  const turns = objects(turn["messages"]);
+  assert.equal(
+    messageHash(objects(summary["messages"]).slice(0, turns.length)),
+    messageHash(turns),
+  );
+  assert.equal(promptFirstEntries(manager).length, 0);
 });
