@@ -1,6 +1,6 @@
 {
   "name": "pi-anthropic-compat",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "description": "Native Anthropic compaction compatibility for Pi",
   "keywords": [
     "pi-package"
