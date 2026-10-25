@@ -173,6 +173,14 @@ Pending tool calls must have results before compaction. Empty or unsigned
 summaries, refusals, timeouts, aborted requests, unsupported responses, and
 concurrent session changes leave the original conversation intact.
 
+The summary request repeats the conversation the turns already cached. Pi marks
+a request's last message as a cache breakpoint only when it is a user, system,
+or tool-result message, so a summary request after a finished response, as with
+`/compact` between turns, would read only the cached tools and system prompt.
+The extension then marks the response's last text or tool-call block with Pi's
+own cache setting, so Anthropic reads the turns' cached prefix. It adds no
+breakpoint when Pi sent none or a request already has Anthropic's limit of four.
+
 Anthropic answers a transient compaction failure with HTTP 529
 `overloaded_error`, error code `compaction_unavailable`, and documents that the
 request should be retried. The extension retries a summary request that fails
@@ -346,6 +354,7 @@ Low effort can omit thinking on simple tasks, so the fixture includes a
 multi-step arithmetic problem. A response without thinking fails the test.
 A Sonnet 5.5 test adds a tool mid-conversation, which Pi sends as an inline tool
 definition, compacts the full history, and requires a call to the added tool afterwards.
+Its summary request follows a finished response and must read everything the last turn cached.
 Three Sonnet 5.5 tests run a shell command before the first prompt. A control without
 the extension adds a tool after a thinking turn and requires a prompt-cache miss. Sending
 that request again with thinking-prefix enforcement must then be rejected. With the extension, the same steps

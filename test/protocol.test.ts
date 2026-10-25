@@ -189,6 +189,53 @@ test("summary requests strip incompatible controls and retain native conversatio
   assert.throws(() => summaryPayload(original, 4096, "a".repeat(16001)), /exceed/);
 });
 
+test("summary requests mark the last cacheable block when no message carries a breakpoint", () => {
+  const marker = { type: "ephemeral", ttl: "1h" };
+  const reply = {
+    role: "assistant",
+    content: [
+      { type: "thinking", thinking: "", signature: "fixture" },
+      { type: "text", text: "Recorded." },
+    ],
+  };
+  const effort = { role: "system", content: [], output_config: { effort: "low" } };
+  const payload = summaryPayload(
+    {
+      system: [{ type: "text", text: "System", cache_control: marker }],
+      tools: [{ name: "read", cache_control: marker }],
+      messages: [{ role: "user", content: [{ type: "text", text: "Prompt" }] }, reply, effort],
+    },
+    4096,
+  );
+  // The effort marker has no block, and thinking cannot carry a breakpoint, so the text does.
+  assert.deepEqual(objects(payload["messages"])[1], {
+    ...reply,
+    content: [reply.content[0], { ...reply.content[1], cache_control: marker }],
+  });
+  assert.deepEqual(objects(payload["messages"])[2], effort);
+});
+
+test("summary requests keep Pi's message breakpoint, the breakpoint limit, and disabled caching", () => {
+  const marker = { type: "ephemeral" };
+  const reply = { role: "assistant", content: [{ type: "text", text: "Recorded." }] };
+  const marked = {
+    system: [{ type: "text", text: "System", cache_control: marker }],
+    messages: [
+      { role: "user", content: [{ type: "text", text: "Prompt", cache_control: marker }] },
+      reply,
+    ],
+  };
+  assert.deepEqual(summaryPayload(marked, 4096)["messages"], marked.messages);
+  const full = {
+    system: [1, 2, 3].map((index) => ({ type: "text", text: `S${index}`, cache_control: marker })),
+    tools: [{ name: "read", cache_control: marker }],
+    messages: [reply],
+  };
+  assert.deepEqual(summaryPayload(full, 4096)["messages"], [reply]);
+  const uncached = { system: [{ type: "text", text: "System" }], messages: [reply] };
+  assert.deepEqual(summaryPayload(uncached, 4096)["messages"], [reply]);
+});
+
 test("summary accounting includes compaction iterations exactly once", () => {
   const response = summaryResponse();
   const parsed = parseSummary(response, model);

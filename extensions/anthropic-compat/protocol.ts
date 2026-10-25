@@ -218,6 +218,66 @@ export function replay(payload: JsonObject, saved: Checkpoint | undefined): Json
   });
 }
 
+/** Anthropic rejects a request with more cache breakpoints than this. */
+const MAX_CACHE_BREAKPOINTS = 4;
+// Content blocks Anthropic accepts a cache breakpoint on. Thinking blocks cannot carry one.
+const CACHEABLE_BLOCKS = new Set([
+  "text",
+  "image",
+  "document",
+  "tool_use",
+  "tool_result",
+  "tool_addition",
+  "tool_removal",
+]);
+
+function breakpoints(blocks: unknown): JsonObject[] {
+  return Array.isArray(blocks)
+    ? objects(blocks).filter((block) => block["cache_control"] !== undefined)
+    : [];
+}
+
+function cacheable(block: JsonObject): boolean {
+  const type = block["type"];
+  if (typeof type !== "string" || !CACHEABLE_BLOCKS.has(type)) return false;
+  return type !== "text" || (typeof block["text"] === "string" && block["text"].length > 0);
+}
+
+/**
+ * Mark the last cacheable message block as a cache breakpoint when no message carries one.
+ *
+ * Pi marks the last message only when it is a user, system, or tool-result message. A summary
+ * request built after a finished response ends with that response, so without a message
+ * breakpoint Anthropic reads only the cached tools and system prompt. At a breakpoint on the
+ * response, Anthropic finds the prefix the previous turn cached a few blocks earlier. The marker
+ * copies Pi's own system or tool breakpoint, so it follows the configured cache retention, and a
+ * request without one stays unmarked.
+ */
+export function markHistory(payload: JsonObject): JsonObject {
+  const messages = Array.isArray(payload["messages"]) ? objects(payload["messages"]) : [];
+  if (messages.some((message) => breakpoints(message["content"]).length > 0)) return payload;
+  const existing = [...breakpoints(payload["system"]), ...breakpoints(payload["tools"])];
+  const marker = existing[0]?.["cache_control"];
+  if (marker === undefined || existing.length >= MAX_CACHE_BREAKPOINTS) return payload;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const content = messages[index]?.["content"];
+    if (!Array.isArray(content)) continue;
+    const blocks = objects(content);
+    const last = blocks.findLastIndex(cacheable);
+    if (last < 0) continue;
+    const marked = blocks.map((block, position) =>
+      position === last ? { ...block, cache_control: marker } : block,
+    );
+    return {
+      ...payload,
+      messages: messages.map((message, position) =>
+        position === index ? { ...message, content: marked } : message,
+      ),
+    };
+  }
+  return payload;
+}
+
 export function summaryPayload(
   payload: JsonObject,
   maxTokens: number,
@@ -251,7 +311,7 @@ export function summaryPayload(
       custom ?? "",
     ].join(" "),
   };
-  return result;
+  return markHistory(result);
 }
 
 function tokenCount(value: unknown): number {

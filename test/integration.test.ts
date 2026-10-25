@@ -858,6 +858,27 @@ test("keep-tail compaction retains recent messages after a shell command before 
   assert.ok(activeCheckpoint(manager.getBranch())?.retained);
 });
 
+test("a summary request after a finished response marks that response as a cache breakpoint", async (t) => {
+  const { session, requests } = await setup(t, {
+    modelId: "claude-opus-5-5",
+    managed: true,
+    patchSystem: false,
+  });
+  await session.prompt("Remember the synthetic project Lantern.");
+  await session.compact();
+  const summary = requests.at(-1);
+  assert.ok(summary?.["compaction"]);
+  const marked = objects(summary["messages"]).flatMap((message, index) =>
+    objects(message["content"]).some((block) => block["cache_control"] !== undefined)
+      ? [[index, message["role"]]]
+      : [],
+  );
+  const reply = objects(summary["messages"]).findLastIndex(
+    (message) => message["role"] === "assistant",
+  );
+  assert.deepEqual(marked, [[reply, "assistant"]]);
+});
+
 test("a session answered before the prompt moved keeps its original order", async (t) => {
   const { session, requests, create } = await setup(t, {
     modelId: "claude-opus-5-5",

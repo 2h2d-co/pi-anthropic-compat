@@ -440,9 +440,16 @@ test(
       "Anthropic must accept the inline tool definition.",
     );
 
-    await session.compact("Preserve the exact synthetic project facts.");
+    const compacted = await session.compact("Preserve the exact synthetic project facts.");
     const summary = requests.at(-1);
     assert.ok(summary?.["compaction"]);
+    // `/compact` after a finished response: the summary request keeps the inline tool and reads
+    // everything the last turn cached.
+    const summaryCacheRead = compacted.usage?.cacheRead ?? 0;
+    assert.ok(
+      summaryCacheRead >= cachedPrefix(turn),
+      `The summary request must reuse the turns' cache: read ${summaryCacheRead} of ${cachedPrefix(turn)} cached tokens.`,
+    );
 
     await session.prompt(
       "Call recall_code once with project Lantern, then reply with only the verification code it returns.",
@@ -464,7 +471,7 @@ test(
     const names = objects(requests.at(-1)?.["tools"]).map((tool) => tool["name"]);
     assert.ok(names.includes(recall.name));
     t.diagnostic(
-      "claude-sonnet-5-5 accepted an inline tool definition, compacted the full history, and called the added tool afterwards.",
+      `claude-sonnet-5-5 accepted an inline tool definition, compacted the full history with ${summaryCacheRead} of ${cachedPrefix(turn)} cached tokens read, and called the added tool afterwards.`,
     );
   },
 );
@@ -848,7 +855,12 @@ test(
       1,
     );
 
-    await run.session.compact("Preserve the synthetic project name.");
+    const compacted = await run.session.compact("Preserve the synthetic project name.");
+    const summaryCacheRead = compacted.usage?.cacheRead ?? 0;
+    assert.ok(
+      summaryCacheRead >= cachedPrefix(run.second),
+      `The summary request must reuse the turns' cache: read ${summaryCacheRead} of ${cachedPrefix(run.second)} cached tokens.`,
+    );
     // The summary request repeats the turns, including the inline tool, so it shares their prefix.
     const summary = run.requests.at(-1);
     assert.ok(summary?.["compaction"]);
@@ -878,7 +890,7 @@ test(
       /7341/,
     );
     t.diagnostic(
-      `The tool change read ${run.second.usage.cacheRead} of ${cachedPrefix(run.first)} cached tokens, enforced replay accepted the earlier thinking, and the summary request repeated the turns with the inline tool.`,
+      `The tool change read ${run.second.usage.cacheRead} of ${cachedPrefix(run.first)} cached tokens, enforced replay accepted the earlier thinking, and the summary request read ${summaryCacheRead} of ${cachedPrefix(run.second)}.`,
     );
   },
 );

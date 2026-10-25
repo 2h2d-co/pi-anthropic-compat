@@ -18,6 +18,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The native summary request no longer drops a tool added mid-conversation. It treated the tool
   as hidden because it was missing from the request's `tools`, so the summary request diverged
   from the turns at that point.
+- A native summary request after a finished response, as with `/compact` between turns, now
+  reads the conversation from the prompt cache. Pi set no cache breakpoint on a final response,
+  so the request read only the cached tools and system prompt and billed the conversation as
+  uncached input.
 
 ## [0.0.16] - 2026-10-22
 
