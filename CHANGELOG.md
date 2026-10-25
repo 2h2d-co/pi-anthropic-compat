@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.17] - 2026-10-25
+
 ### Fixed
 
 - A session that starts with a `!` shell command no longer loses its prompt cache and the
