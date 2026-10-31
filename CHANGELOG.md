@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- A `summaryInstructions` configuration setting replaces the default summary guidance in every
+  native summary request, including automatic compaction. Guidance from `/compact <instructions>`
+  follows it. The limit of 16,000 characters now applies to the whole instruction text.
+
 ## [0.0.17] - 2026-10-25
 
 ### Fixed

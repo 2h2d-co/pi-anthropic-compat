@@ -7,7 +7,9 @@ import {
   eligibleModel,
   parseSummary,
   referencedTools,
+  DEFAULT_SUMMARY_INSTRUCTIONS,
   replay,
+  summaryInstructions,
   summaryPayload,
   toolDefinitions,
 } from "../extensions/anthropic-compat/protocol.ts";
@@ -170,7 +172,7 @@ test("summary requests strip incompatible controls and retain native conversatio
     stop_sequences: ["stop"],
     fallbacks: [],
   };
-  const payload = summaryPayload(original, 4096, "Preserve filenames.");
+  const payload = summaryPayload(original, 4096, summaryInstructions(null, "Preserve filenames."));
   assert.equal(payload["stream"], false);
   assert.equal(payload["max_tokens"], 4096);
   assert.deepEqual(payload["messages"], original.messages);
@@ -186,7 +188,27 @@ test("summary requests strip incompatible controls and retain native conversatio
   const instructions = object(payload["compaction"])["instructions"];
   assert.equal(typeof instructions, "string");
   assert.ok(typeof instructions === "string" && instructions.includes("Preserve filenames"));
-  assert.throws(() => summaryPayload(original, 4096, "a".repeat(16001)), /exceed/);
+  assert.throws(
+    () => summaryPayload(original, 4096, summaryInstructions(null, "a".repeat(16001))),
+    /exceed/,
+  );
+});
+
+test("summary instructions put configured or default guidance first and always forbid tools", () => {
+  const textOnly = "Do not call tools. Respond with text only.";
+  assert.equal(summaryInstructions(), `${DEFAULT_SUMMARY_INSTRUCTIONS}\n\n${textOnly}`);
+  assert.equal(summaryInstructions(null, "  "), `${DEFAULT_SUMMARY_INSTRUCTIONS}\n\n${textOnly}`);
+  assert.equal(
+    summaryInstructions("Keep wording.", " Name the project. "),
+    `Keep wording.\n\n${textOnly}\n\nName the project.`,
+  );
+  const payload = summaryPayload({ model: "claude-opus-5-5", messages: [] }, 4096);
+  assert.equal(object(payload["compaction"])["instructions"], summaryInstructions());
+  // The limit covers the whole text, including the default guidance.
+  assert.throws(
+    () => summaryPayload({ messages: [] }, 4096, summaryInstructions("a".repeat(15990), "b")),
+    /exceed/,
+  );
 });
 
 test("summary requests mark the last cacheable block when no message carries a breakpoint", () => {

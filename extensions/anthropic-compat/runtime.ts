@@ -37,6 +37,7 @@ import {
   parseSummary,
   referencedTools,
   replay,
+  summaryInstructions,
   template,
   toolDefinitions,
 } from "./protocol.ts";
@@ -465,7 +466,7 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
           summaryRequest(),
           Math.min(configuration(ctx).maxSummaryTokens, model.maxTokens),
           signal,
-          event.customInstructions,
+          summaryInstructions(configuration(ctx).summaryInstructions, event.customInstructions),
           fetcher,
           {
             onRetry: ({ attempt, maxRetries, delayMs, reason }) => {

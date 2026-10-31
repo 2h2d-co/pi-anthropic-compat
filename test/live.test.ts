@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,6 +48,8 @@ async function liveSession(
     codemode?: "on" | "only";
     customTools?: ToolDefinition[];
     keepRecentTokens?: number;
+    /** Write this `summaryInstructions` value to the configuration file. */
+    summaryInstructions?: string;
     /** Collect the payloads published on the compaction-cancelled channel. */
     cancellations?: unknown[];
     /** Load this extension. Without it, Pi's own Anthropic provider serves the session. */
@@ -61,7 +63,11 @@ async function liveSession(
   await mkdir(join(root, ".pi"));
   await writeFile(
     join(root, ".pi", "pi-anthropic-compat.json"),
-    JSON.stringify({ enabled: true, keepRecentTokens: options.keepRecentTokens ?? 1 }),
+    JSON.stringify({
+      enabled: true,
+      keepRecentTokens: options.keepRecentTokens ?? 1,
+      summaryInstructions: options.summaryInstructions,
+    }),
   );
   // The in-process runtime must use the repository dependency's metadata, not an inherited
   // package directory. `npm run test:live` removes an inherited PI_PACKAGE_DIR.
@@ -406,9 +412,13 @@ test(
         return { content: [{ type: "text", text: "Verification code: 7341" }], details: {} };
       },
     });
+    const summaryInstructions = (
+      await readFile(join(repository, "test/fixtures/summary-instructions.txt"), "utf8")
+    ).trim();
     const { session, requests } = await liveSession(t, "claude-sonnet-5-5", {
       customTools: [lookup, recall],
       keepRecentTokens: 0,
+      summaryInstructions,
     });
     const initialToolNames = session.getActiveToolNames().filter((name) => name !== recall.name);
     session.setActiveToolsByName(initialToolNames);
@@ -443,6 +453,11 @@ test(
     const compacted = await session.compact("Preserve the exact synthetic project facts.");
     const summary = requests.at(-1);
     assert.ok(summary?.["compaction"]);
+    const instructions = object(summary["compaction"])["instructions"];
+    assert.ok(
+      typeof instructions === "string" && instructions.startsWith(summaryInstructions),
+      "The summary request must lead with the configured summary instructions.",
+    );
     // `/compact` after a finished response: the summary request keeps the inline tool and reads
     // everything the last turn cached.
     const summaryCacheRead = compacted.usage?.cacheRead ?? 0;
@@ -471,7 +486,7 @@ test(
     const names = objects(requests.at(-1)?.["tools"]).map((tool) => tool["name"]);
     assert.ok(names.includes(recall.name));
     t.diagnostic(
-      `claude-sonnet-5-5 accepted an inline tool definition, compacted the full history with ${summaryCacheRead} of ${cachedPrefix(turn)} cached tokens read, and called the added tool afterwards.`,
+      `claude-sonnet-5-5 accepted an inline tool definition, compacted the full history under configured summary instructions with ${summaryCacheRead} of ${cachedPrefix(turn)} cached tokens read, and called the added tool afterwards.`,
     );
   },
 );

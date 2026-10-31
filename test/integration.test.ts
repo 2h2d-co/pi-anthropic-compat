@@ -87,6 +87,8 @@ async function setup(
     enabled?: boolean;
     persistent?: boolean;
     keepRecentTokens?: number;
+    /** Write this `summaryInstructions` value to the configuration file. */
+    summaryInstructions?: string;
     managed?: boolean;
     modelId?: "claude-opus-5-5" | "claude-haiku-5-5";
     /** Replace the serialized system prompt at the payload boundary. Default: true. */
@@ -118,6 +120,7 @@ async function setup(
     JSON.stringify({
       enabled: options.enabled ?? true,
       keepRecentTokens: options.keepRecentTokens ?? 0,
+      summaryInstructions: options.summaryInstructions,
     }),
   );
   const original = process.env["PI_CODING_AGENT_DIR"];
@@ -321,6 +324,23 @@ test("native compaction restores session configuration before requests after rel
   await resumed.prompt("Continue after resume.");
   await resumed.compact();
   assert.ok(requests.at(-1)?.["compaction"]);
+});
+
+test("configured summary instructions replace the default guidance and precede /compact guidance", async (t) => {
+  const { session, requests } = await setup(t, {
+    summaryInstructions: "Keep each task's wording and priority.",
+  });
+  await session.prompt("Remember the synthetic project Lantern.");
+  await session.compact("Name the project.");
+  const summary = requests.findLast((request) => request["compaction"]);
+  assert.deepEqual(summary?.["compaction"], {
+    type: "summarize",
+    instructions: [
+      "Keep each task's wording and priority.",
+      "Do not call tools. Respond with text only.",
+      "Name the project.",
+    ].join("\n\n"),
+  });
 });
 
 test("tree navigation retains active session configuration instead of reloading files", async (t) => {

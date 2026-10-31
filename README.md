@@ -276,6 +276,22 @@ Settings are stored in `~/.pi/agent/pi-anthropic-compat.json`.
 | `maxSummaryTokens` | Integer from 1024 to 32768 |
 | `timeoutSeconds`   | Integer from 10 to 600     |
 
+`summaryInstructions` is a file-only setting. The menu does not show or change
+it. Its text replaces the extension's default summary guidance, which asks
+for a concise continuation summary. Its accepted values are a nonempty string of
+at most 16,000 characters, or `null` for the default. Every summary request
+adds the rule against tool calls after it, and `/compact <instructions>` adds
+its guidance last. Ask only to select or emphasize conversation content.
+Anthropic's native compaction has refused an instruction to state a fact absent
+from the conversation, and a refusal cancels the compaction. A change takes
+effect when a session starts or reloads.
+
+```json
+{
+  "summaryInstructions": "Summarize this conversation for the assistant that will continue the work. Keep each ongoing task's wording and priority exactly as the conversation last stated them."
+}
+```
+
 A trusted project's `.pi/pi-anthropic-compat.json` overrides global values.
 The menu saves to that file when it already exists. Otherwise it saves globally.
 Untrusted project configuration is ignored. Invalid configuration produces an
@@ -307,7 +323,8 @@ Session overrides retain their original conflict checks across menu reopenings.
 Conflicting external edits remain protected after reload or restart.
 
 The menu requires TUI mode. File configuration also works in print and RPC
-modes. `/compact <instructions>` supplies additional summary guidance.
+modes. `/compact <instructions>` supplies additional summary guidance after
+`summaryInstructions`.
 
 ## Development
 

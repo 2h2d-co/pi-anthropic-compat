@@ -1,4 +1,5 @@
 import { calculateCost, type Model, type Api, type Usage } from "@earendil-works/pi-ai";
+import { MAX_INSTRUCTIONS_LENGTH } from "./config.ts";
 import { object, objects, type JsonObject } from "./json.ts";
 import { retainedHistory, replayRetained, type RetainedHistory } from "./tail.ts";
 
@@ -278,10 +279,27 @@ export function markHistory(payload: JsonObject): JsonObject {
   return payload;
 }
 
+/** The summary guidance used when the configuration sets no `summaryInstructions`. */
+export const DEFAULT_SUMMARY_INSTRUCTIONS =
+  "Write a concise continuation summary. Preserve the user's goals, constraints, decisions, file paths, completed work, outstanding tasks, and facts needed to continue.";
+
+/** Anthropic documents summarizers that try to call a tool, so every summary request forbids it. */
+const TEXT_ONLY = "Do not call tools. Respond with text only.";
+
+/**
+ * Anthropic's `instructions` replace its own summary prompt. Configured guidance replaces the
+ * default guidance, and guidance from `/compact <instructions>` follows both.
+ */
+export function summaryInstructions(configured?: string | null, custom?: string): string {
+  return [configured ?? DEFAULT_SUMMARY_INSTRUCTIONS, TEXT_ONLY, custom?.trim()]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 export function summaryPayload(
   payload: JsonObject,
   maxTokens: number,
-  instructions?: string,
+  instructions = summaryInstructions(),
 ): JsonObject {
   const result = addBeta({ ...payload, stream: false, max_tokens: maxTokens });
   delete result["context_management"];
@@ -300,17 +318,9 @@ export function summaryPayload(
     const thinking = object(payload["thinking"]);
     if (thinking["type"] === "adaptive") result["thinking"] = thinking;
   }
-  const custom = instructions?.trim();
-  if (custom && custom.length > 16_000)
+  if (instructions.length > MAX_INSTRUCTIONS_LENGTH)
     throw new Error("Compaction instructions exceed 16,000 characters.");
-  result["compaction"] = {
-    type: "summarize",
-    instructions: [
-      "Write a concise continuation summary. Preserve the user's goals, constraints, decisions, file paths,",
-      "completed work, outstanding tasks, and facts needed to continue. Do not call tools. Respond with text only.",
-      custom ?? "",
-    ].join(" "),
-  };
+  result["compaction"] = { type: "summarize", instructions };
   return markHistory(result);
 }
 

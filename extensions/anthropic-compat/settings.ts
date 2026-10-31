@@ -10,7 +10,7 @@ import {
   type SettingsField,
   type SettingsMenuFactory,
 } from "../settings-menu.ts";
-import { SettingsStore } from "../settings-store.ts";
+import { SettingsStore, type SettingValues } from "../settings-store.ts";
 import {
   readSessionSettings,
   sessionSettingsEntry,
@@ -75,6 +75,13 @@ export function loadSessionConfig(
   return parseConfig(saved.values, loadConfig(ctx.cwd, ctx.isProjectTrusted()).config);
 }
 
+/** The menu edits only its fields. Other configuration, such as `summaryInstructions`, stays in files. */
+function menuValues(config: Config): SettingValues {
+  return Object.fromEntries(
+    Object.entries(config).filter(([id]) => settingFields.some((field) => field.id === id)),
+  );
+}
+
 export function registerSettings(
   pi: {
     appendEntry: (customType: string, data: unknown) => void;
@@ -98,7 +105,7 @@ export function registerSettings(
       const store = new SettingsStore(
         join(getAgentDir(), "pi-anthropic-compat.json"),
         trusted ? join(ctx.cwd, CONFIG_DIR_NAME, "pi-anthropic-compat.json") : undefined,
-        (global, project) => ({ ...parseConfig(object(project), parseConfig(object(global))) }),
+        (global, project) => menuValues(parseConfig(object(project), parseConfig(object(global)))),
       );
       try {
         await ctx.ui.custom(
@@ -106,7 +113,7 @@ export function registerSettings(
             title: "Anthropic Settings",
             store,
             snapshot: await store.load(),
-            current: { ...state.get(ctx) },
+            current: menuValues(state.get(ctx)),
             session: readSessionSettings(ctx, SESSION_SETTINGS_TYPE, settingFields).session,
             fields: settingFields,
             status: (values) =>
@@ -136,7 +143,7 @@ export function registerSettings(
                 SESSION_SETTINGS_TYPE,
                 sessionSettingsEntry(session, values, sessionState, {}),
               );
-              state.set(parseConfig(values));
+              state.set(parseConfig(values, loadConfig(ctx.cwd, trusted).config));
             },
           }),
         );

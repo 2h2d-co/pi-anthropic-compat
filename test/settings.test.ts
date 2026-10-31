@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getKeybindings, type Component } from "@earendil-works/pi-tui";
@@ -12,20 +12,25 @@ import {
   type SettingsContext,
   type SettingsHandler,
 } from "../extensions/anthropic-compat/settings.ts";
-import { DEFAULT_CONFIG } from "../extensions/anthropic-compat/config.ts";
+import { DEFAULT_CONFIG, type Config } from "../extensions/anthropic-compat/config.ts";
 
-test("Anthropic session settings restore on reload and stay isolated from new sessions", async (t) => {
+test("Anthropic session settings restore on reload, stay isolated from new sessions, and keep file-only settings", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "anthropic-settings-"));
   const previous = process.env["PI_CODING_AGENT_DIR"];
   process.env["PI_CODING_AGENT_DIR"] = join(root, "agent");
   await mkdir(join(root, "agent"));
+  // The menu does not edit summaryInstructions. Applying and saving must keep it.
+  const file = join(root, "agent", "pi-anthropic-compat.json");
+  const instructions = "Keep each task's wording.";
+  const original = `${JSON.stringify({ summaryInstructions: instructions })}\n`;
+  await writeFile(file, original);
   t.after(async () => {
     if (previous === undefined) delete process.env["PI_CODING_AGENT_DIR"];
     else process.env["PI_CODING_AGENT_DIR"] = previous;
     await rm(root, { recursive: true, force: true });
   });
   initTheme("dark", false);
-  let current = { ...DEFAULT_CONFIG };
+  let current: Config = { ...DEFAULT_CONFIG, summaryInstructions: instructions };
   let handler: SettingsHandler | undefined;
   let component: Component | undefined;
   const manager = SessionManager.inMemory(root);
@@ -93,12 +98,16 @@ test("Anthropic session settings restore on reload and stay isolated from new se
   component.handleInput?.("\r");
   await applied;
   assert.equal(current.enabled, true);
-  const file = join(root, "agent", "pi-anthropic-compat.json");
-  await assert.rejects(readFile(file), { code: "ENOENT" });
+  assert.equal(current.summaryInstructions, instructions);
+  assert.equal(await readFile(file, "utf8"), original);
+  const entry = manager.getEntries().findLast((item) => item.type === "custom");
+  assert.ok(entry?.type === "custom");
+  assert.equal(JSON.stringify(entry.data).includes("summaryInstructions"), false);
   component.handleInput?.("\u001b");
   await pending;
   current = loadSessionConfig(ctx);
   assert.equal(current.enabled, true);
+  assert.equal(current.summaryInstructions, instructions);
   const reopened = new Promise<void>((resolve) => {
     opened = resolve;
   });
@@ -116,21 +125,20 @@ test("Anthropic session settings restore on reload and stay isolated from new se
   await restarted;
   assert.match(component.render(120).join("\n"), /Native compaction\s+off/);
   component.handleInput?.("\u0013");
-  await assert.rejects(readFile(file), { code: "ENOENT" });
+  assert.equal(await readFile(file, "utf8"), original);
   component.handleInput?.("\r");
   const persisted = new Promise<void>((resolve) => {
     saved = resolve;
   });
   component.handleInput?.("\u0013");
   await persisted;
-  const data: unknown = JSON.parse(
-    await readFile(join(root, "agent", "pi-anthropic-compat.json"), "utf8"),
-  );
-  assert.deepEqual(data, { enabled: true });
+  const data: unknown = JSON.parse(await readFile(file, "utf8"));
+  assert.deepEqual(data, { summaryInstructions: instructions, enabled: true });
   component.handleInput?.("\r");
   component.handleInput?.("\u001b");
   await pendingRestart;
   assert.equal(current.enabled, true);
+  assert.equal(current.summaryInstructions, instructions);
   assert.equal(settingFields.length, 4);
   assert.equal(settingFields.find((field) => field.id === "maxSummaryTokens")?.number?.max, 32768);
 });

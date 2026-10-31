@@ -149,9 +149,13 @@ for (const { modelId, keepRecentTokens, strictLimit, shellFirst = false } of sce
           compaction: { enabled: false, keepRecentTokens: 1 },
         }),
       );
+      // Configured summary instructions replace the default guidance in every packaged run.
+      const summaryInstructions = (
+        await readFile(join(root, "test/fixtures/summary-instructions.txt"), "utf8")
+      ).trim();
       await writeFile(
         join(agent, "pi-anthropic-compat.json"),
-        JSON.stringify({ enabled: true, keepRecentTokens }),
+        JSON.stringify({ enabled: true, keepRecentTokens, summaryInstructions }),
       );
       const sessionFile = join(temporary, "session.jsonl");
       const strictFixture = join(temporary, "strict-fixture.js");

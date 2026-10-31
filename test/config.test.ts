@@ -26,6 +26,24 @@ test("configuration defaults are opt-in and reject invalid ranges", () => {
   assert.equal(settingFields.length, 4);
 });
 
+test("summaryInstructions accepts trimmed text or null and rejects other values", () => {
+  assert.equal(DEFAULT_CONFIG.summaryInstructions, null);
+  assert.equal(
+    parseConfig({ summaryInstructions: "  Keep it.\n" }).summaryInstructions,
+    "Keep it.",
+  );
+  const base = parseConfig({ summaryInstructions: "Keep it." });
+  assert.equal(parseConfig({ summaryInstructions: null }, base).summaryInstructions, null);
+  assert.equal(parseConfig({}, base).summaryInstructions, "Keep it.");
+  assert.equal(
+    parseConfig({ summaryInstructions: "a".repeat(16000) }).summaryInstructions?.length,
+    16000,
+  );
+  for (const summaryInstructions of ["", " \n", 1, false, ["Keep it."], "a".repeat(16001)]) {
+    assert.throws(() => parseConfig({ summaryInstructions }), /summaryInstructions/);
+  }
+});
+
 test("trusted project overrides, global defaults, and invalid project isolation", async () => {
   const root = await mkdtemp(join(tmpdir(), "anthropic-config-"));
   const agent = join(root, "agent");

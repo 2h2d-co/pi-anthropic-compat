@@ -8,13 +8,19 @@ export type Config = {
   keepRecentTokens: number;
   maxSummaryTokens: number;
   timeoutSeconds: number;
+  /** Replaces the default summary guidance. `null` keeps the default. */
+  summaryInstructions: string | null;
 };
+
+/** Anthropic's limit on compaction instructions is 16,384 characters; this leaves room for the rest. */
+export const MAX_INSTRUCTIONS_LENGTH = 16_000;
 
 export const DEFAULT_CONFIG: Config = {
   enabled: false,
   keepRecentTokens: 0,
   maxSummaryTokens: 4096,
   timeoutSeconds: 120,
+  summaryInstructions: null,
 };
 
 export type ConfigFile = { file: string; text: string | undefined; data: JsonObject };
@@ -47,6 +53,17 @@ export function parseConfig(data: JsonObject, base: Config = DEFAULT_CONFIG): Co
       throw new Error(`${key} must be an integer from ${minimum} to ${maximum}.`);
     }
     result[key] = value;
+  }
+  const instructions = data["summaryInstructions"];
+  if (instructions !== undefined) {
+    const text = typeof instructions === "string" ? instructions.trim() : undefined;
+    if (instructions !== null && !text) {
+      throw new Error("summaryInstructions must be a nonempty string or null.");
+    }
+    if (text && text.length > MAX_INSTRUCTIONS_LENGTH) {
+      throw new Error("summaryInstructions exceeds 16,000 characters.");
+    }
+    result.summaryInstructions = text ?? null;
   }
   return result;
 }
