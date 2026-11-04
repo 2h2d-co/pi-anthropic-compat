@@ -13,8 +13,9 @@ import {
   SettingsManager,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { InMemoryCredentialStore, Type, type Message } from "@earendil-works/pi-ai";
+import { InMemoryCredentialStore, type Message } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
+import { Type } from "typebox";
 import {
   registerCompatibility,
   activeCheckpoint,

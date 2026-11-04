@@ -18,7 +18,8 @@ import {
   SettingsManager,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type, type AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import extension from "../extensions/index.ts";
 import { object, objects, type JsonObject } from "../extensions/anthropic-compat/json.ts";
 import { activeCheckpoint } from "../extensions/anthropic-compat/runtime.ts";
