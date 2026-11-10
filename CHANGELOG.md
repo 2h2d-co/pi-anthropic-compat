@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.22] - 2026-11-10
+
 ### Changed
 
 - Require Pi `>=1.5.2 <1.6.0`. Pi 1.5.2 reaches Claude Fable 5.2 with a Claude subscription login,
