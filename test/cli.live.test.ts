@@ -50,7 +50,7 @@ const READ_FACTS =
  * a native compaction, a continuation, a CLI restart, and a resumed continuation against
  * the real Anthropic API. The compaction summary message is withheld from the model once a
  * signed checkpoint exists, so fact recall after compaction proves the signed block replayed.
- * Fable 5.1 runs only in the SDK test. Pi AI builds its requests like these models'.
+ * Fable 5.2 and Fable 5.1 run only in the SDK test. Pi AI builds their requests like these models'.
  */
 const scenarios = [
   { modelId: "claude-opus-5-5", keepRecentTokens: 0, strictLimit: false },

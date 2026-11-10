@@ -42,6 +42,13 @@ function assertProjectLantern(value: unknown): void {
   );
 }
 
+/**
+ * Pi 1.5.1 reports Claude Code 2.1.280 on subscription logins, and Anthropic serves Fable 5.2
+ * only to 2.1.290 or newer. Users apply the same `user-agent` override in models.json. Remove it
+ * with the Pi release that reports a newer version.
+ */
+const FABLE_5_2_USER_AGENT = "claude-cli/2.1.322";
+
 async function liveSession(
   t: TestContext,
   modelId: string,
@@ -101,16 +108,15 @@ async function liveSession(
     if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
     else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
   });
+  // Pi refreshes the session model from its registry, so overrides go through models.json.
+  const anthropicOverrides = {
+    ...(options.threads === false ? { compat: { supportsMessageThreads: false } } : {}),
+    ...(modelId === "claude-fable-5-2" ? { headers: { "user-agent": FABLE_5_2_USER_AGENT } } : {}),
+  };
   let modelsPath: string | null = null;
-  if (options.threads === false) {
-    // Pi refreshes the session model from its registry, so the override goes through models.json.
+  if (Object.keys(anthropicOverrides).length > 0) {
     modelsPath = join(agentDir, "models.json");
-    await writeFile(
-      modelsPath,
-      JSON.stringify({
-        providers: { anthropic: { compat: { supportsMessageThreads: false } } },
-      }),
-    );
+    await writeFile(modelsPath, JSON.stringify({ providers: { anthropic: anthropicOverrides } }));
   }
   const runtime = await ModelRuntime.create({
     authPath: join(realAgentDir, "auth.json"),
@@ -210,6 +216,7 @@ async function liveSession(
 }
 
 for (const modelId of [
+  "claude-fable-5-2",
   "claude-fable-5-1",
   "claude-opus-5-5",
   "claude-sonnet-5-5",

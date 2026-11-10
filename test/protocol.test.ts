@@ -41,6 +41,7 @@ test("only documented direct Anthropic models are eligible", () => {
   assert.equal(eligibleModel({ ...model, id: "claude-opus-5-5", provider: "openrouter" }), false);
   assert.equal(eligibleModel({ ...model, id: "claude-haiku-4-5" }), false);
   assert.equal(eligibleModel({ ...model, id: "claude-haiku-5-5" }), true);
+  assert.equal(eligibleModel({ ...model, id: "claude-fable-5-2" }), true);
   assert.equal(eligibleModel({ ...model, id: "claude-haiku-5-5-preview" }), false);
   assert.equal(eligibleModel({ ...model, id: "claude-haiku-5-5", provider: "openrouter" }), false);
   assert.equal(

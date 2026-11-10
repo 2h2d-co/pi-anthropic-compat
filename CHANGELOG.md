@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Native compaction supports Claude Fable 5.2 (`claude-fable-5-2`). With a Claude subscription
+  login, Pi 1.5.1 needs a `user-agent` override in `models.json` to reach the model. The README
+  shows it.
+
 ## [0.0.20] - 2026-11-10
 
 ### Changed

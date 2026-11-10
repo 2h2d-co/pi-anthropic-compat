@@ -149,12 +149,22 @@ This version supports the direct Claude API and these documented model IDs:
 - `claude-haiku-5-5`
 - `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-sonnet-4-6`
 - `claude-opus-5-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`
-- `claude-fable-5-1`, `claude-fable-5`
+- `claude-fable-5-2`, `claude-fable-5-1`, `claude-fable-5`
 - `claude-mythos-5-1`, `claude-mythos-5`, `claude-mythos-preview`
 
 The live Models API must also report support. Haiku 4.5 does not support native
 on-demand compaction. Unsupported models, other providers, and proxies retain
 Pi's ordinary compaction behavior.
+
+Pi 1.5.1 reports Claude Code 2.1.280 on Claude subscription logins, and Anthropic
+serves Fable 5.2 there only to Claude Code 2.1.290 or newer. Until a Pi release
+reports a newer version, add this to `~/.pi/agent/models.json`:
+
+```json
+{ "providers": { "anthropic": { "headers": { "user-agent": "claude-cli/2.1.322" } } } }
+```
+
+Merge it into an existing file rather than replacing it.
 
 **Pi's virtual models are not supported.** Native compaction checks the
 selected model, not the model that answers a request. Pi's experimental virtual models, registered with
@@ -360,7 +370,8 @@ effort instructions, changed system/tools/content, and cold session resume.
 their test processes, so in-process tests read the repository Pi's own metadata.
 Ordinary `pi` launches are unaffected.
 
-Live tests make billed Fable 5.1, Opus 5.5, Sonnet 5.5, and Haiku 5.5 requests at `low` effort:
+Live tests make billed Fable 5.2, Fable 5.1, Opus 5.5, Sonnet 5.5, and Haiku 5.5 requests
+at `low` effort:
 
 ```sh
 npm run test:live
@@ -402,8 +413,10 @@ requires the selected Pi to match the repository's Pi development dependency.
 repository's Pi dependency.
 The CLI tests run Opus 5.5, Sonnet 5.5, and Haiku 5.5, each with full-history and
 retained-message compaction. One more Sonnet 5.5 run starts with a shell command and
-requires retained-message compaction to succeed. Fable 5.1 runs only in the SDK test, because Pi AI handles its
-requests like those three models. The default test suite and CI skip live tests.
+requires retained-message compaction to succeed. Fable 5.2 and Fable 5.1 run only in the
+SDK test, because Pi AI handles their requests like those three models. The Fable 5.2
+test sends the `user-agent` override from [Models and endpoints](#models-and-endpoints).
+The default test suite and CI skip live tests.
 Anthropic live runs keep normal tools, extensions, capabilities, and resource
 loading enabled. Test state and prompt-patcher rules are isolated without
 restricting the available tools.
