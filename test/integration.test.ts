@@ -111,6 +111,11 @@ async function setup(
     notices?: string[];
     /** Collect the payloads published on the compaction-cancelled channel. */
     cancellations?: unknown[];
+    /**
+     * Let Pi continue Anthropic message threads. A continuation sends only the new messages,
+     * without `system` and `tools`, so tests that inspect complete request bodies keep it off.
+     */
+    threads?: boolean;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "anthropic-integration-"));
@@ -143,6 +148,14 @@ async function setup(
       ? { ...model, id: "claude-fable-5-1" }
       : model;
   assert.ok(selected);
+  // Pi refreshes the session model from its registry, so the override goes through models.json.
+  const modelsPath = join(agentDir, "models.json");
+  await writeFile(
+    modelsPath,
+    JSON.stringify({
+      providers: { anthropic: { compat: { supportsMessageThreads: options.threads ?? false } } },
+    }),
+  );
   const fetcher: typeof fetch = async (input, init) => {
     const request = new Request(input, init);
     assert.equal(new URL(request.url).origin, "https://api.anthropic.com");
@@ -199,7 +212,7 @@ async function setup(
   const create = async (sessionManager = manager) => {
     const runtime = await ModelRuntime.create({
       credentials: new InMemoryCredentialStore(),
-      modelsPath: null,
+      modelsPath,
       modelsStorePath: join(agentDir, "models-store.json"),
       allowModelNetwork: false,
     });
@@ -655,7 +668,8 @@ test("a turn Pi retries without strict tools records only the accepted request",
   });
   await session.prompt("Remember the synthetic project Lantern.");
   await session.prompt("Continue.");
-  assert.deepEqual(requests.map(hasStrictTool), [true, false, true, false]);
+  // Pi remembers the rejection and sends the next turn non-strict without another attempt.
+  assert.deepEqual(requests.map(hasStrictTool), [true, false, false]);
   const custom = (type: string) =>
     manager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === type);
   assert.equal(custom(TEMPLATE_TYPE).length, 1);
@@ -663,7 +677,7 @@ test("a turn Pi retries without strict tools records only the accepted request",
   assert.equal(boundaries.length, 2);
   for (const [index, entry] of boundaries.entries()) {
     assert.ok(entry.type === "custom");
-    const accepted = requests[index * 2 + 1];
+    const accepted = requests[index + 1];
     assert.ok(accepted);
     assert.equal(object(entry.data)["templateHash"], fingerprint(bindingTemplate(accepted)));
   }
@@ -719,6 +733,86 @@ for (const keepRecentTokens of [0, 1]) {
     assert.equal(saved?.retained, undefined);
   });
 }
+
+for (const keepRecentTokens of [0, 1]) {
+  test(`compaction turns after Pi's remembered strict downgrade send tools non-strict (keepRecentTokens=${keepRecentTokens})`, async (t) => {
+    const notices: string[] = [];
+    const { session, manager, requests } = await setup(t, {
+      modelId: "claude-opus-5-5",
+      managed: true,
+      strictLimit: true,
+      keepRecentTokens,
+      notices,
+    });
+    await session.prompt("Remember the synthetic project Lantern.");
+    // The latest turn is sent non-strict at once, so it carries no fallback diagnostic.
+    await session.prompt("Remember the synthetic city Harbor.");
+    const last = session.messages.at(-1);
+    assert.ok(last?.role === "assistant" && last.stopReason === "stop");
+    assert.equal(
+      (last.diagnostics ?? []).some(
+        (diagnostic) => diagnostic.type === "anthropic_strict_tools_fallback",
+      ),
+      false,
+    );
+    const result = await session.compact();
+    assert.equal(result.summary, block["content"]);
+    const summaries = requests.filter((request) => request["compaction"]);
+    assert.deepEqual(summaries.map(hasStrictTool), [false]);
+    const saved = activeCheckpoint(manager.getBranch());
+    assert.equal(saved?.retained, undefined);
+    assert.deepEqual(
+      notices,
+      keepRecentTokens > 0
+        ? [
+            "warning: Anthropic rejects this session's strict tool set, so native compaction summarized the full history instead of retaining recent messages.",
+          ]
+        : [],
+    );
+  });
+}
+
+test("turns continue message threads until a signed checkpoint, then go complete", async (t) => {
+  const { session, manager, requests } = await setup(t, {
+    modelId: "claude-opus-5-5",
+    managed: true,
+    keepRecentTokens: 1,
+    threads: true,
+  });
+  await session.prompt("Older facts.");
+  await session.prompt("Recent facts.");
+  const [first, second] = requests;
+  assert.ok(first && second);
+  assert.equal(object(first["thread"])["type"], "create");
+  // A continuation omits the prompt and tools; the extension records the complete request.
+  assert.equal(object(second["thread"])["type"], "continue");
+  assert.equal(second["system"], undefined);
+  assert.equal(second["tools"], undefined);
+  assert.ok(activeTemplate(manager.getBranch(), "claude-opus-5-5")?.["system"]);
+  await session.compact();
+  const summary = requests.at(-1);
+  assert.ok(summary?.["compaction"]);
+  assert.equal(summary["thread"], undefined);
+  assert.ok(summary["system"]);
+  const saved = activeCheckpoint(manager.getBranch());
+  assert.ok(saved?.retained);
+  const afterCompaction = requests.length;
+  await session.prompt("Continue after compaction.");
+  await session.prompt("Continue again.");
+  // Anthropic rejects a thread over the signed block, so these turns are sent complete.
+  const continued = requests.slice(afterCompaction);
+  assert.equal(continued.length, 2);
+  for (const request of continued) {
+    assert.ok(!request["compaction"]);
+    assert.equal(request["thread"], undefined);
+    assert.ok(request["system"]);
+    assert.deepEqual(objects(request["messages"])[0], { role: "assistant", content: [block] });
+    assert.deepEqual(
+      objects(request["messages"]).slice(1, 1 + saved.retained.messages.length),
+      saved.retained.messages,
+    );
+  }
+});
 
 test("Pi automatic threshold invokes native compaction", async (t) => {
   const { session, manager, requests } = await setup(t, { automatic: true });

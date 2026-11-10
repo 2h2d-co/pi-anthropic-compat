@@ -59,9 +59,10 @@ const scenarios = [
   { modelId: "claude-sonnet-5-5", keepRecentTokens: 1, strictLimit: false },
   { modelId: "claude-haiku-5-5", keepRecentTokens: 0, strictLimit: false },
   { modelId: "claude-haiku-5-5", keepRecentTokens: 1, strictLimit: false },
-  // Pi's strict built-in tools plus these exceed Anthropic's limit of 20 strict tools, so Pi
-  // retries every turn with preferred strict tools non-strict, and compaction must follow. Such
-  // sessions compact the full history even when retention is configured.
+  // Pi's strict built-in tools plus these exceed Anthropic's limit of 20 strict tools, so Anthropic
+  // rejects the first turn and Pi sends the session's turns with preferred strict tools non-strict.
+  // Compaction must follow, and such sessions compact the full history even when retention is
+  // configured.
   { modelId: "claude-sonnet-5-5", keepRecentTokens: 0, strictLimit: true },
   { modelId: "claude-sonnet-5-5", keepRecentTokens: 1, strictLimit: true },
   // A shell command before the first prompt comes first in Pi's transcript. The extension moves

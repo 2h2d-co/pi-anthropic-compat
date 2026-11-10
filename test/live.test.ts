@@ -55,6 +55,11 @@ async function liveSession(
     cancellations?: unknown[];
     /** Load this extension. Without it, Pi's own Anthropic provider serves the session. */
     compat?: boolean;
+    /**
+     * Pi's default continues Anthropic message threads, whose requests carry only the new
+     * messages. Pass false for a test that resends a complete turn request.
+     */
+    threads?: boolean;
   } = {},
 ) {
   const compat = options.compat ?? true;
@@ -96,9 +101,20 @@ async function liveSession(
     if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
     else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
   });
+  let modelsPath: string | null = null;
+  if (options.threads === false) {
+    // Pi refreshes the session model from its registry, so the override goes through models.json.
+    modelsPath = join(agentDir, "models.json");
+    await writeFile(
+      modelsPath,
+      JSON.stringify({
+        providers: { anthropic: { compat: { supportsMessageThreads: false } } },
+      }),
+    );
+  }
   const runtime = await ModelRuntime.create({
     authPath: join(realAgentDir, "auth.json"),
-    modelsPath: null,
+    modelsPath,
     modelsStorePath: join(agentDir, "models-store.json"),
     allowModelNetwork: false,
   });
@@ -436,7 +452,9 @@ test(
     await session.prompt("Reply with only OK. Do not use tools.");
     const added = requests.at(-1);
     assert.ok(added && !added["compaction"]);
-    assert.deepEqual(added["tools"], initialTools);
+    // Pi continues the message thread only when `tools` is unchanged, and a continuation omits it.
+    if (object(added["thread"])["type"] === "continue") assert.equal(added["tools"], undefined);
+    else assert.deepEqual(added["tools"], initialTools);
     const definitions = objects(added["messages"]).flatMap((message) =>
       objects(message["content"]).flatMap((block) => {
         if (block["type"] !== "tool_addition") return [];
@@ -467,6 +485,7 @@ test(
       `The summary request must reuse the turns' cache: read ${summaryCacheRead} of ${cachedPrefix(turn)} cached tokens.`,
     );
 
+    const afterCompaction = requests.length;
     await session.prompt(
       "Call recall_code once with project Lantern, then reply with only the verification code it returns.",
     );
@@ -484,8 +503,25 @@ test(
         .join(""),
       /7341/,
     );
-    const names = objects(requests.at(-1)?.["tools"]).map((tool) => tool["name"]);
-    assert.ok(names.includes(recall.name));
+    // Anthropic rejects a message thread over the signed block, so the extension sends every
+    // later turn complete, and Pi never falls back from a rejected thread request.
+    const continued = requests.slice(afterCompaction);
+    assert.ok(continued.length >= 2, "The tool call and its result take two requests.");
+    for (const request of continued) {
+      assert.equal(request["thread"], undefined);
+      const names = objects(request["tools"]).map((tool) => tool["name"]);
+      assert.ok(names.includes(recall.name));
+    }
+    assert.equal(
+      session.messages.some(
+        (message) =>
+          message.role === "assistant" &&
+          (message.diagnostics ?? []).some(
+            (diagnostic) => diagnostic.type === "anthropic_thread_fallback",
+          ),
+      ),
+      false,
+    );
     t.diagnostic(
       `claude-sonnet-5-5 accepted an inline tool definition, compacted the full history under configured summary instructions with ${summaryCacheRead} of ${cachedPrefix(turn)} cached tokens read, and called the added tool afterwards.`,
     );
@@ -781,10 +817,13 @@ async function shellFirstToolChange(t: TestContext, compat: boolean) {
       return { content: [{ type: "text", text: "Verification code: 7341" }], details: {} };
     },
   });
+  // Enforced replay resends the second turn's complete request, which a thread continuation
+  // does not carry. Pi sends complete requests whenever a thread cannot continue.
   const live = await liveSession(t, "claude-sonnet-5-5", {
     customTools: [recall],
     keepRecentTokens: 0,
     compat,
+    threads: false,
   });
   const { session, requests } = live;
   const initialToolNames = session.getActiveToolNames().filter((name) => name !== recall.name);

@@ -214,19 +214,25 @@ export function activeTemplate(
 }
 
 /**
- * Whether Pi had to retry the branch's latest response from this model with `strict: "prefer"`
- * tools non-strict after Anthropic rejected the strict tool set.
+ * Whether the last turn sent `strict: "prefer"` tools non-strict because Anthropic rejected the
+ * strict tool set. `serialized` holds the tools Pi declares strict when no rejection is known;
+ * the saved template holds the tools of the last request Anthropic accepted. Pi rejects once
+ * and then remembers the rejection for the session, so later turns carry no fallback diagnostic
+ * and only the recorded request shows the downgrade.
  */
-export function strictToolsRejected(branch: readonly SessionEntry[], model: string): boolean {
-  for (let index = branch.length - 1; index >= 0; index--) {
-    const entry = branch[index];
-    if (entry?.type !== "message" || entry.message.role !== "assistant") continue;
-    if (entry.message.model !== model) continue;
-    return (entry.message.diagnostics ?? []).some(
-      (diagnostic) => diagnostic.type === "anthropic_strict_tools_fallback",
-    );
-  }
-  return false;
+export function strictToolsDowngraded(serialized: unknown, savedTemplate: JsonObject): boolean {
+  const name = (tool: JsonObject) => (typeof tool["name"] === "string" ? tool["name"] : undefined);
+  const sent = new Map(
+    (Array.isArray(savedTemplate["tools"]) ? objects(savedTemplate["tools"]) : []).map((tool) => [
+      name(tool),
+      tool,
+    ]),
+  );
+  return (Array.isArray(serialized) ? objects(serialized) : []).some((tool) => {
+    if (tool["strict"] !== true) return false;
+    const accepted = sent.get(name(tool));
+    return accepted !== undefined && accepted["strict"] !== true;
+  });
 }
 
 export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
@@ -289,8 +295,17 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
       // Pi can serialize a turn twice: after a strict-tool-limit rejection it retries once with
       // preferred strict tools non-strict. Only the request Anthropic accepts is recorded.
       let record: (() => void) | undefined;
+      // Anthropic rejects a message thread over a signed compaction block, and Pi then turns
+      // threads off for the session after one rejected request. Turns that replay a checkpoint
+      // are sent complete instead.
+      const replaysCheckpoint =
+        turn !== undefined &&
+        eligibleModel(model) &&
+        options?.sessionId === turn.sessionManager.getSessionId() &&
+        activeCheckpoint(turn.sessionManager.getBranch()) !== undefined;
       return anthropic.streamSimple(model, request, {
         ...options,
+        ...(replaysCheckpoint ? { disableContinuation: true } : {}),
         onPayload: async (payload, selected) => {
           record = undefined;
           const updated = await options?.onPayload?.(payload, selected);
@@ -405,23 +420,34 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
       };
       // Serialize without transmission, then select only a proven earlier request.
       const serialize = async (nonStrict: boolean) => {
+        // The tools Pi declares before any transform, from the first (strict) attempt.
+        let piTools: unknown;
         const request = await prepareRequest(
           requestModel,
           normalizeContext({ messages }),
-          serializationOptions,
+          {
+            ...serializationOptions,
+            onPayload: async (payload, selected) => {
+              if (piTools === undefined) piTools = object(payload)["tools"] ?? null;
+              return serializationOptions.onPayload?.(payload, selected);
+            },
+          },
           nonStrict,
         );
         const payload = replay(object(await request.clone().json()), saved);
         if (payload["model"] !== model.id) {
           throw new Error("A provider transform changed the summary model. History was preserved.");
         }
-        return { request, payload };
+        return { request, payload, piTools };
       };
-      // After Anthropic rejects the strict tool set, Pi sends each turn non-strict. Retained
-      // messages replay only behind the tools they were answered with, and Pi sends the strict
-      // set first on every later turn, so such sessions compact the full history instead.
-      const rejectedStrict = strictToolsRejected(branch, model.id);
-      let { request: whole, payload: wholePayload } = await serialize(rejectedStrict);
+      // After Anthropic rejects the strict tool set, Pi sends later turns non-strict until it
+      // restarts, and then sends the strict set first again. Retained messages replay only
+      // behind the tools they were answered with, so such sessions compact the full history.
+      const strict = await serialize(false);
+      const rejectedStrict = strictToolsDowngraded(strict.piTools, savedTemplate);
+      let { request: whole, payload: wholePayload } = rejectedStrict
+        ? await serialize(true)
+        : strict;
       const keepRecentTokens = configuration(ctx).keepRecentTokens;
       const managedEffort = model.compat?.supportsMidConvoEffort === true;
       let fullHistoryFallback = keepRecentTokens > 0 && rejectedStrict;

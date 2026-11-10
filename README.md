@@ -2,9 +2,9 @@
 
 Native Anthropic compatibility for Pi, starting with signed on-demand compaction.
 
-Requires Pi `>=1.5.0 <1.6.0` and Node.js 22.19 or newer. Releases are
-validated against Pi 1.5.0. The extension refuses to load on a Pi older than
-1.5.0, because Pi does not enforce the package's peer range when it installs
+Requires Pi `>=1.5.1 <1.6.0` and Node.js 22.19 or newer. Releases are
+validated against Pi 1.5.1. The extension refuses to load on a Pi older than
+1.5.1, because Pi does not enforce the package's peer range when it installs
 packages.
 
 ## Install
@@ -49,13 +49,14 @@ Pi's separate setting with the same name does not control the native boundary.
 
 Anthropic rejects a request whose strict tools exceed its limits, such as more
 than 20 strict tools. Pi then retries the turn once with `strict: "prefer"` tools
-non-strict. The extension records only the request Anthropic accepted.
-Compaction follows Pi. After a turn needed that retry, the summary request sends
-those tools non-strict. When Anthropic rejects a summary request for the same
-reason, the extension retries it once with those tools non-strict. Such sessions
-compact the full history even when **Native tail tokens** is set, and a warning
-says so. Retained history replays only behind the tools it was answered with, and
-Pi sends the strict tool set first on every later turn.
+non-strict and sends the session's later turns non-strict until Pi restarts. The
+extension records only the request Anthropic accepted. Compaction follows Pi.
+When the last recorded turn sent those tools non-strict, the summary request does
+too. When Anthropic rejects a summary request for the same reason, the extension
+retries it once with those tools non-strict. Such sessions compact the full
+history even when **Native tail tokens** is set, and a warning says so. Retained
+history replays only behind the tools it was answered with, and after a restart
+Pi sends the strict tool set first again.
 
 ### Tool changes
 
@@ -118,8 +119,8 @@ check uses the tools Pi will send after compaction, so a tool change still
 cancels keep-tail compaction before any summary request.
 
 Pi synthesizes effort-control messages around responses from models whose
-catalog entry sets `compat.supportsMidConvoEffort`: Fable 5.1, Opus 5, Opus 5.5,
-Sonnet 5.5, and Haiku 5.5 in Pi 1.5.0. The extension
+catalog entry sets `compat.supportsMidConvoEffort`: Fable 5.2, Fable 5.1, Opus 5,
+Opus 5.5, Sonnet 5.5, and Haiku 5.5 in Pi 1.5.1. The extension
 removes only a verified duplicate boundary instruction that was already
 summarized. It preserves every instruction inside the retained range.
 
@@ -130,6 +131,13 @@ Pi also decides whether a session is large enough to compact before invoking
 extensions. Very short sessions can return “Nothing to compact.”
 The extension does not change Pi's global compaction settings or intercept
 `/tree` branch summarization.
+
+Pi continues Anthropic conversations as message threads: after a reply, the next
+request sends only the new messages and the server keeps the rest. Pi applies
+this after the extension, so the extension still records and compacts complete
+requests. Summary requests are always sent complete and read the turns' prompt
+cache. Anthropic does not continue a thread over a signed summary, so the
+extension sends every turn after a native compaction complete.
 
 Turning native compaction off prevents new native summaries. Existing signed
 summaries still replay until another Pi compaction replaces them.
@@ -377,7 +385,9 @@ the extension adds a tool after a thinking turn and requires a prompt-cache miss
 that request again with thinking-prefix enforcement must then be rejected. With the extension, the same steps
 must read the whole earlier prompt from the cache, enforced replay must succeed, and the
 summary request must repeat the turns with the inline tool. A keep-tail test must retain
-the signed thinking of the turn after the shell command.
+the signed thinking of the turn after the shell command. The control and the test with the
+extension turn off Pi's Anthropic message threads, because enforced replay resends the
+complete second request. The other tests keep threads on, as Pi does by default.
 
 The CLI tests use `PI_PACKAGE_ARCHIVE` when supplied and otherwise pack the
 extension locally. Each loads the archive through the shipped Pi executable in

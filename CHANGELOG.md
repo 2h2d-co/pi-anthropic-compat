@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Require Pi `>=1.5.1 <1.6.0`.
+
+### Fixed
+
+- Keep-tail compaction no longer cancels with "No recorded safe boundary satisfies native tail
+  retention" in a session whose strict tool set Anthropic rejected two or more turns earlier.
+  Pi 1.5.1 sends such turns non-strict without another attempt, so they carry no rejection
+  diagnostic. The extension now reads the downgrade from the last recorded request, summarizes
+  the full history, and warns, as it does after a rejected turn.
+- After a native compaction, turns no longer send one rejected request before Pi gives up on
+  Anthropic message threads for the session. Anthropic does not continue a thread over a signed
+  summary, so the extension sends these turns complete from the start.
+
 ## [0.0.19] - 2026-11-04
 
 ### Changed
