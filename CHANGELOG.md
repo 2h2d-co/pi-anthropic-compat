@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Require Pi `>=1.5.2 <1.6.0`. Pi 1.5.2 reaches Claude Fable 5.2 with a Claude subscription login,
+  so remove the `user-agent` override that 0.0.21 asked you to add to `models.json`.
+
 ## [0.0.21] - 2026-11-10
 
 ### Added

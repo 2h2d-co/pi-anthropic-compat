@@ -1,6 +1,6 @@
 import { VERSION } from "@earendil-works/pi-coding-agent";
 
-export const MINIMUM_PI_VERSION = "1.5.1";
+export const MINIMUM_PI_VERSION = "1.5.2";
 
 /** Compare dotted numeric release versions; prerelease suffixes rank below their release. */
 export function atLeastVersion(version: unknown, minimum: string): boolean {

@@ -2,9 +2,9 @@
 
 Native Anthropic compatibility for Pi, starting with signed on-demand compaction.
 
-Requires Pi `>=1.5.1 <1.6.0` and Node.js 22.19 or newer. Releases are
-validated against Pi 1.5.1. The extension refuses to load on a Pi older than
-1.5.1, because Pi does not enforce the package's peer range when it installs
+Requires Pi `>=1.5.2 <1.6.0` and Node.js 22.19 or newer. Releases are
+validated against Pi 1.5.2. The extension refuses to load on a Pi older than
+1.5.2, because Pi does not enforce the package's peer range when it installs
 packages.
 
 ## Install
@@ -120,7 +120,7 @@ cancels keep-tail compaction before any summary request.
 
 Pi synthesizes effort-control messages around responses from models whose
 catalog entry sets `compat.supportsMidConvoEffort`: Fable 5.2, Fable 5.1, Opus 5,
-Opus 5.5, Sonnet 5.5, and Haiku 5.5 in Pi 1.5.1. The extension
+Opus 5.5, Sonnet 5.5, and Haiku 5.5 in Pi 1.5.2. The extension
 removes only a verified duplicate boundary instruction that was already
 summarized. It preserves every instruction inside the retained range.
 
@@ -155,16 +155,6 @@ This version supports the direct Claude API and these documented model IDs:
 The live Models API must also report support. Haiku 4.5 does not support native
 on-demand compaction. Unsupported models, other providers, and proxies retain
 Pi's ordinary compaction behavior.
-
-Pi 1.5.1 reports Claude Code 2.1.280 on Claude subscription logins, and Anthropic
-serves Fable 5.2 there only to Claude Code 2.1.290 or newer. Until a Pi release
-reports a newer version, add this to `~/.pi/agent/models.json`:
-
-```json
-{ "providers": { "anthropic": { "headers": { "user-agent": "claude-cli/2.1.322" } } } }
-```
-
-Merge it into an existing file rather than replacing it.
 
 **Pi's virtual models are not supported.** Native compaction checks the
 selected model, not the model that answers a request. Pi's experimental virtual models, registered with
@@ -414,8 +404,7 @@ repository's Pi dependency.
 The CLI tests run Opus 5.5, Sonnet 5.5, and Haiku 5.5, each with full-history and
 retained-message compaction. One more Sonnet 5.5 run starts with a shell command and
 requires retained-message compaction to succeed. Fable 5.2 and Fable 5.1 run only in the
-SDK test, because Pi AI handles their requests like those three models. The Fable 5.2
-test sends the `user-agent` override from [Models and endpoints](#models-and-endpoints).
+SDK test, because Pi AI handles their requests like those three models.
 The default test suite and CI skip live tests.
 Anthropic live runs keep normal tools, extensions, capabilities, and resource
 loading enabled. Test state and prompt-patcher rules are isolated without
