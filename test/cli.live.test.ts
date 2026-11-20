@@ -16,6 +16,7 @@ import { CHECKPOINT_TYPE } from "../extensions/anthropic-compat/protocol.ts";
 import { REQUEST_TYPE } from "../extensions/anthropic-compat/tail.ts";
 import { PROMPT_FIRST_TYPE } from "../extensions/anthropic-compat/prompt-order.ts";
 import { describeFailure, errorLog } from "./support/error-log.ts";
+import { NEWEST_CLAUDE_MODELS } from "./support/live-models.ts";
 import { archiveEntries, packageArchive } from "./support/package-archive.ts";
 import { isolatePromptPatcher } from "./support/prompt-patcher.ts";
 
@@ -50,25 +51,21 @@ const READ_FACTS =
  * a native compaction, a continuation, a CLI restart, and a resumed continuation against
  * the real Anthropic API. The compaction summary message is withheld from the model once a
  * signed checkpoint exists, so fact recall after compaction proves the signed block replayed.
- * Fable 5.2 and Fable 5.1 run only in the SDK test. Pi AI builds their requests like these models'.
+ * Fable 5.1 runs only in the SDK test. Pi AI builds its requests like these models'.
  */
-const scenarios = [
-  { modelId: "claude-opus-5-5", keepRecentTokens: 0, strictLimit: false },
-  { modelId: "claude-opus-5-5", keepRecentTokens: 1, strictLimit: false },
-  { modelId: "claude-sonnet-5-5", keepRecentTokens: 0, strictLimit: false },
-  { modelId: "claude-sonnet-5-5", keepRecentTokens: 1, strictLimit: false },
-  { modelId: "claude-haiku-5-5", keepRecentTokens: 0, strictLimit: false },
-  { modelId: "claude-haiku-5-5", keepRecentTokens: 1, strictLimit: false },
+const scenarios = NEWEST_CLAUDE_MODELS.flatMap((modelId) => [
+  { modelId, keepRecentTokens: 0, strictLimit: false },
+  { modelId, keepRecentTokens: 1, strictLimit: false },
   // Pi's strict built-in tools plus these exceed Anthropic's limit of 20 strict tools, so Anthropic
   // rejects the first turn and Pi sends the session's turns with preferred strict tools non-strict.
   // Compaction must follow, and such sessions compact the full history even when retention is
   // configured.
-  { modelId: "claude-sonnet-5-5", keepRecentTokens: 0, strictLimit: true },
-  { modelId: "claude-sonnet-5-5", keepRecentTokens: 1, strictLimit: true },
+  { modelId, keepRecentTokens: 0, strictLimit: true },
+  { modelId, keepRecentTokens: 1, strictLimit: true },
   // A shell command before the first prompt comes first in Pi's transcript. The extension moves
   // the prompt ahead of it, so keep-tail compaction finds the turns' prompt and tools unchanged.
-  { modelId: "claude-sonnet-5-5", keepRecentTokens: 1, strictLimit: false, shellFirst: true },
-];
+  { modelId, keepRecentTokens: 1, strictLimit: false, shellFirst: true },
+]);
 const STRICT_FIXTURE_TOOLS = 21;
 const STRICT_FIXTURE = `export default function (pi) {
   for (let index = 0; index < ${STRICT_FIXTURE_TOOLS}; index++) {

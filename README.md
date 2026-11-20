@@ -378,10 +378,12 @@ keep-tail compaction, unchanged replay, usage, and fact recovery. Two negative c
 must return thinking-prefix errors after deliberate system and history changes.
 Low effort can omit thinking on simple tasks, so the fixture includes a
 multi-step arithmetic problem. A response without thinking fails the test.
-A Sonnet 5.5 test adds a tool mid-conversation, which Pi sends as an inline tool
+The remaining SDK and CLI tests run on each of the newest models: Fable 5.2, Opus 5.5,
+Sonnet 5.5, and Haiku 5.5. Fable 5.1 runs only the retained-thinking test.
+One test adds a tool mid-conversation, which Pi sends as an inline tool
 definition, compacts the full history, and requires a call to the added tool afterwards.
 Its summary request follows a finished response and must read everything the last turn cached.
-Three Sonnet 5.5 tests run a shell command before the first prompt. A control without
+Three tests run a shell command before the first prompt. A control without
 the extension adds a tool after a thinking turn and requires a prompt-cache miss. Sending
 that request again with thinking-prefix enforcement must then be rejected. With the extension, the same steps
 must read the whole earlier prompt from the cache, enforced replay must succeed, and the
@@ -401,10 +403,9 @@ extension withholds Pi's summary message once a checkpoint exists. The test
 requires the selected Pi to match the repository's Pi development dependency.
 `PI_ANTHROPIC_CLI_PATH` selects another `cli.js` to test; the default is the
 repository's Pi dependency.
-The CLI tests run Opus 5.5, Sonnet 5.5, and Haiku 5.5, each with full-history and
-retained-message compaction. One more Sonnet 5.5 run starts with a shell command and
-requires retained-message compaction to succeed. Fable 5.2 and Fable 5.1 run only in the
-SDK test, because Pi AI handles their requests like those three models.
+The CLI tests run each of the newest models with full-history and retained-message
+compaction, with both past Anthropic's strict tool limit, and once more starting with a
+shell command, where retained-message compaction must succeed.
 The default test suite and CI skip live tests.
 Anthropic live runs keep normal tools, extensions, capabilities, and resource
 loading enabled. Test state and prompt-patcher rules are isolated without

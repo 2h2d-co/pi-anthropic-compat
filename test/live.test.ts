@@ -30,6 +30,7 @@ import {
 } from "../extensions/anthropic-compat/protocol.ts";
 import { PROMPT_FIRST_TYPE } from "../extensions/anthropic-compat/prompt-order.ts";
 import { describeFailure, errorLog } from "./support/error-log.ts";
+import { NEWEST_CLAUDE_MODELS } from "./support/live-models.ts";
 import { isolatePromptPatcher } from "./support/prompt-patcher.ts";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -340,198 +341,9 @@ for (const modelId of [
   );
 }
 
-test(
-  "live claude-sonnet-5-5 keep-tail compaction declares the turn tools under codemode only mode",
-  {
-    skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
-    timeout: 180000,
-  },
-  async (t) => {
-    const lookup = defineTool({
-      name: "lookup_value",
-      label: "Lookup",
-      description: "Look up a stored value by key.",
-      parameters: Type.Object({ key: Type.String() }),
-      async execute() {
-        return { content: [{ type: "text", text: "unused" }], details: {} };
-      },
-    });
-    const { session, manager, requests } = await liveSession(t, "claude-sonnet-5-5", {
-      codemode: "only",
-      customTools: [lookup],
-    });
-    await session.prompt(
-      "Remember these synthetic project facts: project Lantern, port 4317. Reply with only OK. Do not use tools.",
-    );
-    const first = session.messages.at(-1);
-    assert.ok(
-      first?.role === "assistant" && first.stopReason === "stop",
-      "The initial synthetic turn must succeed before compaction.",
-    );
-    const turn = requests.at(-1);
-    assert.ok(turn && !turn["compaction"]);
-    // Codemode `only` mode hides the direct tool from requests; scripts reach it.
-    const names = objects(turn["tools"]).map((tool) => tool["name"]);
-    assert.ok(names.includes("codemode"));
-    assert.equal(names.includes(lookup.name), false);
-
-    await session.compact("Preserve the exact synthetic project facts.");
-    const summary = requests.at(-1);
-    assert.ok(summary?.["compaction"]);
-    assert.deepEqual(summary["tools"], turn["tools"]);
-    assert.ok(activeCheckpoint(manager.getBranch())?.retained);
-
-    await session.prompt(
-      "Return only JSON with project and port (number) from the earlier project facts. Do not use tools.",
-    );
-    const last = session.messages.at(-1);
-    assert.ok(
-      last?.role === "assistant" && last.stopReason === "stop",
-      "Expected a successful continuation.",
-    );
-    const text = last.content
-      .filter((item) => item.type === "text")
-      .map((item) => item.text)
-      .join("")
-      .trim()
-      .replace(/^```(?:json)?\s*/, "")
-      .replace(/\s*```$/, "");
-    const result = object(JSON.parse(text));
-    assertProjectLantern(result["project"]);
-    assert.equal(result["port"], 4317);
-    assert.deepEqual(requests.at(-1)?.["tools"], turn["tools"]);
-  },
-);
-
-test(
-  "live claude-sonnet-5-5 full-history compaction keeps a tool added mid-conversation callable",
-  {
-    skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
-    timeout: 180000,
-  },
-  async (t) => {
-    const lookup = defineTool({
-      name: "lookup_value",
-      label: "Lookup",
-      description: "Look up a stored value by key.",
-      parameters: Type.Object({ key: Type.String() }),
-      async execute() {
-        return { content: [{ type: "text", text: "unused" }], details: {} };
-      },
-    });
-    const recalled: string[] = [];
-    const recall = defineTool({
-      name: "recall_code",
-      label: "Recall",
-      description: "Return the synthetic verification code for a project.",
-      parameters: Type.Object({ project: Type.String() }),
-      async execute(_id, params) {
-        recalled.push(params.project);
-        return { content: [{ type: "text", text: "Verification code: 7341" }], details: {} };
-      },
-    });
-    const summaryInstructions = (
-      await readFile(join(repository, "test/fixtures/summary-instructions.txt"), "utf8")
-    ).trim();
-    const { session, requests } = await liveSession(t, "claude-sonnet-5-5", {
-      customTools: [lookup, recall],
-      keepRecentTokens: 0,
-      summaryInstructions,
-    });
-    const initialToolNames = session.getActiveToolNames().filter((name) => name !== recall.name);
-    session.setActiveToolsByName(initialToolNames);
-    await session.prompt(
-      "Remember these synthetic project facts: project Lantern, port 4317. Reply with only OK. Do not use tools.",
-    );
-    const first = requests.at(-1);
-    assert.ok(first && !first["compaction"]);
-    const initialTools = first["tools"];
-
-    // Pi defines a tool added after the first request inline, in a system message,
-    // and keeps the request-level tool list unchanged.
-    session.setActiveToolsByName([...initialToolNames, recall.name]);
-    await session.prompt("Reply with only OK. Do not use tools.");
-    const added = requests.at(-1);
-    assert.ok(added && !added["compaction"]);
-    // Pi continues the message thread only when `tools` is unchanged, and a continuation omits it.
-    if (object(added["thread"])["type"] === "continue") assert.equal(added["tools"], undefined);
-    else assert.deepEqual(added["tools"], initialTools);
-    const definitions = objects(added["messages"]).flatMap((message) =>
-      objects(message["content"]).flatMap((block) => {
-        if (block["type"] !== "tool_addition") return [];
-        const tool = object(block["tool"]);
-        return tool["type"] === "tool_definition" ? [object(tool["definition"])["name"]] : [];
-      }),
-    );
-    assert.deepEqual(definitions, [recall.name]);
-    const turn = session.messages.at(-1);
-    assert.ok(
-      turn?.role === "assistant" && turn.stopReason === "stop",
-      "Anthropic must accept the inline tool definition.",
-    );
-
-    const compacted = await session.compact("Preserve the exact synthetic project facts.");
-    const summary = requests.at(-1);
-    assert.ok(summary?.["compaction"]);
-    const instructions = object(summary["compaction"])["instructions"];
-    assert.ok(
-      typeof instructions === "string" && instructions.startsWith(summaryInstructions),
-      "The summary request must lead with the configured summary instructions.",
-    );
-    // `/compact` after a finished response: the summary request keeps the inline tool and reads
-    // everything the last turn cached.
-    const summaryCacheRead = compacted.usage?.cacheRead ?? 0;
-    assert.ok(
-      summaryCacheRead >= cachedPrefix(turn),
-      `The summary request must reuse the turns' cache: read ${summaryCacheRead} of ${cachedPrefix(turn)} cached tokens.`,
-    );
-
-    const afterCompaction = requests.length;
-    await session.prompt(
-      "Call recall_code once with project Lantern, then reply with only the verification code it returns.",
-    );
-    const last = session.messages.at(-1);
-    assert.ok(
-      last?.role === "assistant" && last.stopReason === "stop",
-      "Expected a successful continuation.",
-    );
-    assert.equal(recalled.length, 1, "Expected exactly one recall_code call.");
-    assertProjectLantern(recalled[0]);
-    assert.match(
-      last.content
-        .filter((item) => item.type === "text")
-        .map((item) => item.text)
-        .join(""),
-      /7341/,
-    );
-    // Anthropic rejects a message thread over the signed block, so the extension sends every
-    // later turn complete, and Pi never falls back from a rejected thread request.
-    const continued = requests.slice(afterCompaction);
-    assert.ok(continued.length >= 2, "The tool call and its result take two requests.");
-    for (const request of continued) {
-      assert.equal(request["thread"], undefined);
-      const names = objects(request["tools"]).map((tool) => tool["name"]);
-      assert.ok(names.includes(recall.name));
-    }
-    assert.equal(
-      session.messages.some(
-        (message) =>
-          message.role === "assistant" &&
-          (message.diagnostics ?? []).some(
-            (diagnostic) => diagnostic.type === "anthropic_thread_fallback",
-          ),
-      ),
-      false,
-    );
-    t.diagnostic(
-      `claude-sonnet-5-5 accepted an inline tool definition, compacted the full history under configured summary instructions with ${summaryCacheRead} of ${cachedPrefix(turn)} cached tokens read, and called the added tool afterwards.`,
-    );
-  },
-);
-
-for (const keepRecentTokens of [0, 1]) {
+for (const modelId of NEWEST_CLAUDE_MODELS) {
   test(
-    `live claude-sonnet-5-5 compacts after an interrupted tool call with keepRecentTokens=${keepRecentTokens}`,
+    `live ${modelId} keep-tail compaction declares the turn tools under codemode only mode`,
     {
       skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
       timeout: 180000,
@@ -546,41 +358,30 @@ for (const keepRecentTokens of [0, 1]) {
           return { content: [{ type: "text", text: "unused" }], details: {} };
         },
       });
-      const { session, manager, requests } = await liveSession(t, "claude-sonnet-5-5", {
+      const { session, manager, requests } = await liveSession(t, modelId, {
+        codemode: "only",
         customTools: [lookup],
-        keepRecentTokens,
       });
       await session.prompt(
         "Remember these synthetic project facts: project Lantern, port 4317. Reply with only OK. Do not use tools.",
       );
-      // Interrupt the next response as soon as it starts streaming a tool call, as a user
-      // pressing Escape would.
-      let abort: Promise<void> | undefined;
-      const unsubscribe = session.subscribe((event) => {
-        if (
-          !abort &&
-          event.type === "message_update" &&
-          event.assistantMessageEvent.type === "toolcall_start"
-        ) {
-          abort = session.abort();
-        }
-      });
-      await session.prompt("Call lookup_value once with key port.");
-      await abort;
-      unsubscribe();
-      const interrupted = session.messages.at(-1);
+      const first = session.messages.at(-1);
       assert.ok(
-        interrupted?.role === "assistant" &&
-          interrupted.stopReason === "aborted" &&
-          interrupted.content.some((item) => item.type === "toolCall"),
-        "The interrupted response must keep its unanswered tool call.",
+        first?.role === "assistant" && first.stopReason === "stop",
+        "The initial synthetic turn must succeed before compaction.",
       );
-      await session.prompt("Ignore that request. Reply with only OK. Do not use tools.");
+      const turn = requests.at(-1);
+      assert.ok(turn && !turn["compaction"]);
+      // Codemode `only` mode hides the direct tool from requests; scripts reach it.
+      const names = objects(turn["tools"]).map((tool) => tool["name"]);
+      assert.ok(names.includes("codemode"));
+      assert.equal(names.includes(lookup.name), false);
+
       await session.compact("Preserve the exact synthetic project facts.");
-      assert.ok(requests.at(-1)?.["compaction"]);
-      const saved = activeCheckpoint(manager.getBranch());
-      assert.ok(saved);
-      assert.equal(Boolean(saved.retained), keepRecentTokens > 0);
+      const summary = requests.at(-1);
+      assert.ok(summary?.["compaction"]);
+      assert.deepEqual(summary["tools"], turn["tools"]);
+      assert.ok(activeCheckpoint(manager.getBranch())?.retained);
 
       await session.prompt(
         "Return only JSON with project and port (number) from the earlier project facts. Do not use tools.",
@@ -600,124 +401,334 @@ for (const keepRecentTokens of [0, 1]) {
       const result = object(JSON.parse(text));
       assertProjectLantern(result["project"]);
       assert.equal(result["port"], 4317);
+      assert.deepEqual(requests.at(-1)?.["tools"], turn["tools"]);
+    },
+  );
+}
+
+for (const modelId of NEWEST_CLAUDE_MODELS) {
+  test(
+    `live ${modelId} full-history compaction keeps a tool added mid-conversation callable`,
+    {
+      skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+      timeout: 180000,
+    },
+    async (t) => {
+      const lookup = defineTool({
+        name: "lookup_value",
+        label: "Lookup",
+        description: "Look up a stored value by key.",
+        parameters: Type.Object({ key: Type.String() }),
+        async execute() {
+          return { content: [{ type: "text", text: "unused" }], details: {} };
+        },
+      });
+      const recalled: string[] = [];
+      const recall = defineTool({
+        name: "recall_code",
+        label: "Recall",
+        description: "Return the synthetic verification code for a project.",
+        parameters: Type.Object({ project: Type.String() }),
+        async execute(_id, params) {
+          recalled.push(params.project);
+          return { content: [{ type: "text", text: "Verification code: 7341" }], details: {} };
+        },
+      });
+      const summaryInstructions = (
+        await readFile(join(repository, "test/fixtures/summary-instructions.txt"), "utf8")
+      ).trim();
+      const { session, requests } = await liveSession(t, modelId, {
+        customTools: [lookup, recall],
+        keepRecentTokens: 0,
+        summaryInstructions,
+      });
+      const initialToolNames = session.getActiveToolNames().filter((name) => name !== recall.name);
+      session.setActiveToolsByName(initialToolNames);
+      await session.prompt(
+        "Remember these synthetic project facts: project Lantern, port 4317. Reply with only OK. Do not use tools.",
+      );
+      const first = requests.at(-1);
+      assert.ok(first && !first["compaction"]);
+      const initialTools = first["tools"];
+
+      // Pi defines a tool added after the first request inline, in a system message,
+      // and keeps the request-level tool list unchanged.
+      session.setActiveToolsByName([...initialToolNames, recall.name]);
+      await session.prompt("Reply with only OK. Do not use tools.");
+      const added = requests.at(-1);
+      assert.ok(added && !added["compaction"]);
+      // Pi continues the message thread only when `tools` is unchanged, and a continuation omits it.
+      if (object(added["thread"])["type"] === "continue") assert.equal(added["tools"], undefined);
+      else assert.deepEqual(added["tools"], initialTools);
+      const definitions = objects(added["messages"]).flatMap((message) =>
+        objects(message["content"]).flatMap((block) => {
+          if (block["type"] !== "tool_addition") return [];
+          const tool = object(block["tool"]);
+          return tool["type"] === "tool_definition" ? [object(tool["definition"])["name"]] : [];
+        }),
+      );
+      assert.deepEqual(definitions, [recall.name]);
+      const turn = session.messages.at(-1);
+      assert.ok(
+        turn?.role === "assistant" && turn.stopReason === "stop",
+        "Anthropic must accept the inline tool definition.",
+      );
+
+      const compacted = await session.compact("Preserve the exact synthetic project facts.");
+      const summary = requests.at(-1);
+      assert.ok(summary?.["compaction"]);
+      const instructions = object(summary["compaction"])["instructions"];
+      assert.ok(
+        typeof instructions === "string" && instructions.startsWith(summaryInstructions),
+        "The summary request must lead with the configured summary instructions.",
+      );
+      // `/compact` after a finished response: the summary request keeps the inline tool and reads
+      // everything the last turn cached.
+      const summaryCacheRead = compacted.usage?.cacheRead ?? 0;
+      assert.ok(
+        summaryCacheRead >= cachedPrefix(turn),
+        `The summary request must reuse the turns' cache: read ${summaryCacheRead} of ${cachedPrefix(turn)} cached tokens.`,
+      );
+
+      const afterCompaction = requests.length;
+      await session.prompt(
+        "Call recall_code once with project Lantern, then reply with only the verification code it returns.",
+      );
+      const last = session.messages.at(-1);
+      assert.ok(
+        last?.role === "assistant" && last.stopReason === "stop",
+        "Expected a successful continuation.",
+      );
+      assert.equal(recalled.length, 1, "Expected exactly one recall_code call.");
+      assertProjectLantern(recalled[0]);
+      assert.match(
+        last.content
+          .filter((item) => item.type === "text")
+          .map((item) => item.text)
+          .join(""),
+        /7341/,
+      );
+      // Anthropic rejects a message thread over the signed block, so the extension sends every
+      // later turn complete, and Pi never falls back from a rejected thread request.
+      const continued = requests.slice(afterCompaction);
+      assert.ok(continued.length >= 2, "The tool call and its result take two requests.");
+      for (const request of continued) {
+        assert.equal(request["thread"], undefined);
+        const names = objects(request["tools"]).map((tool) => tool["name"]);
+        assert.ok(names.includes(recall.name));
+      }
+      assert.equal(
+        session.messages.some(
+          (message) =>
+            message.role === "assistant" &&
+            (message.diagnostics ?? []).some(
+              (diagnostic) => diagnostic.type === "anthropic_thread_fallback",
+            ),
+        ),
+        false,
+      );
       t.diagnostic(
-        `claude-sonnet-5-5 compacted with keepRecentTokens=${keepRecentTokens} after an interrupted tool call and recovered the synthetic facts.`,
+        `${modelId} accepted an inline tool definition, compacted the full history under configured summary instructions with ${summaryCacheRead} of ${cachedPrefix(turn)} cached tokens read, and called the added tool afterwards.`,
       );
     },
   );
 }
 
-test(
-  "live claude-sonnet-5-5 continues after full-history compaction records a tool removal",
-  {
-    skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
-    timeout: 180000,
-  },
-  async (t) => {
-    const lookup = defineTool({
-      name: "lookup_value",
-      label: "Lookup",
-      description: "Look up a stored value by key.",
-      parameters: Type.Object({ key: Type.String() }),
-      async execute() {
-        return { content: [{ type: "text", text: "unused" }], details: {} };
-      },
-    });
-    const retired = defineTool({
-      name: "retired_report",
-      label: "Retired report",
-      description: "Report a value. Withdrawn during the conversation.",
-      parameters: Type.Object({ value: Type.String() }),
-      async execute() {
-        return { content: [{ type: "text", text: "unused" }], details: {} };
-      },
-    });
-    const { session, manager, requests } = await liveSession(t, "claude-sonnet-5-5", {
-      customTools: [lookup, retired],
-      keepRecentTokens: 0,
-    });
-    await session.prompt(
-      "Remember these synthetic project facts: project Lantern, port 4317. Reply with only OK. Do not use tools.",
-    );
-    // Pi withdraws the tool with a removal in the conversation and keeps the first `tools` list.
-    session.setActiveToolsByName(
-      session.getActiveToolNames().filter((name) => name !== retired.name),
-    );
-    await session.prompt("Reply with only OK. Do not use tools.");
-    await session.compact("Preserve the exact synthetic project facts.");
-    assert.ok(requests.at(-1)?.["compaction"]);
-    const saved = activeCheckpoint(manager.getBranch());
-    assert.ok(saved);
-    // Anthropic records the removal's net effect in the signed block.
-    assert.deepEqual(
-      objects(saved.block["tool_changes"]).map((change) => [
-        change["type"],
-        object(change["tool"])["name"],
-      ]),
-      [["tool_removal", retired.name]],
-    );
-
-    await session.prompt(
-      "Return only JSON with project and port (number) from the earlier project facts. Do not use tools.",
-    );
-    const last = session.messages.at(-1);
-    assert.ok(
-      last?.role === "assistant" && last.stopReason === "stop",
-      "Expected a successful continuation.",
-    );
-    // The replayed request declares the removed tool again so the block can remove it.
-    assert.equal(
-      objects(requests.at(-1)?.["tools"]).filter((tool) => tool["name"] === retired.name).length,
-      1,
-    );
-    const text = last.content
-      .filter((item) => item.type === "text")
-      .map((item) => item.text)
-      .join("")
-      .trim()
-      .replace(/^```(?:json)?\s*/, "")
-      .replace(/\s*```$/, "");
-    const result = object(JSON.parse(text));
-    assertProjectLantern(result["project"]);
-    assert.equal(result["port"], 4317);
-    t.diagnostic(
-      "claude-sonnet-5-5 continued after full-history compaction recorded a tool removal in the signed block.",
-    );
-  },
-);
-
-test(
-  "live claude-sonnet-5-5 publishes why native compaction was cancelled",
-  {
-    skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
-    timeout: 180000,
-  },
-  async (t) => {
-    const cancellations: unknown[] = [];
-    // No recorded request leaves this much recent history, so compaction cancels before any
-    // summary request.
-    const { session, requests } = await liveSession(t, "claude-sonnet-5-5", {
-      keepRecentTokens: 200_000,
-      cancellations,
-    });
-    await session.prompt("Reply with only OK. Do not use tools.");
-    const turn = session.messages.at(-1);
-    assert.ok(turn?.role === "assistant" && turn.stopReason === "stop", "The turn must succeed.");
-    await assert.rejects(session.compact(), { message: "Compaction cancelled" });
-    assert.equal(
-      requests.some((request) => request["compaction"]),
-      false,
-    );
-    assert.deepEqual(cancellations, [
+for (const modelId of NEWEST_CLAUDE_MODELS) {
+  for (const keepRecentTokens of [0, 1]) {
+    test(
+      `live ${modelId} compacts after an interrupted tool call with keepRecentTokens=${keepRecentTokens}`,
       {
-        source: "pi-anthropic-compat",
-        reason:
-          "No recorded safe boundary satisfies native tail retention. History was preserved. Run more Anthropic turns or lower Native tail tokens.",
+        skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+        timeout: 180000,
       },
-    ]);
-    t.diagnostic("claude-sonnet-5-5 published the reason a native compaction was cancelled.");
-  },
-);
+      async (t) => {
+        const lookup = defineTool({
+          name: "lookup_value",
+          label: "Lookup",
+          description: "Look up a stored value by key.",
+          parameters: Type.Object({ key: Type.String() }),
+          async execute() {
+            return { content: [{ type: "text", text: "unused" }], details: {} };
+          },
+        });
+        const { session, manager, requests } = await liveSession(t, modelId, {
+          customTools: [lookup],
+          keepRecentTokens,
+        });
+        await session.prompt(
+          "Remember these synthetic project facts: project Lantern, port 4317. Reply with only OK. Do not use tools.",
+        );
+        // Interrupt the next response as soon as it starts streaming a tool call, as a user
+        // pressing Escape would.
+        let abort: Promise<void> | undefined;
+        const unsubscribe = session.subscribe((event) => {
+          if (
+            !abort &&
+            event.type === "message_update" &&
+            event.assistantMessageEvent.type === "toolcall_start"
+          ) {
+            abort = session.abort();
+          }
+        });
+        await session.prompt("Call lookup_value once with key port.");
+        await abort;
+        unsubscribe();
+        const interrupted = session.messages.at(-1);
+        assert.ok(
+          interrupted?.role === "assistant" &&
+            interrupted.stopReason === "aborted" &&
+            interrupted.content.some((item) => item.type === "toolCall"),
+          "The interrupted response must keep its unanswered tool call.",
+        );
+        await session.prompt("Ignore that request. Reply with only OK. Do not use tools.");
+        await session.compact("Preserve the exact synthetic project facts.");
+        assert.ok(requests.at(-1)?.["compaction"]);
+        const saved = activeCheckpoint(manager.getBranch());
+        assert.ok(saved);
+        assert.equal(Boolean(saved.retained), keepRecentTokens > 0);
+
+        await session.prompt(
+          "Return only JSON with project and port (number) from the earlier project facts. Do not use tools.",
+        );
+        const last = session.messages.at(-1);
+        assert.ok(
+          last?.role === "assistant" && last.stopReason === "stop",
+          "Expected a successful continuation.",
+        );
+        const text = last.content
+          .filter((item) => item.type === "text")
+          .map((item) => item.text)
+          .join("")
+          .trim()
+          .replace(/^```(?:json)?\s*/, "")
+          .replace(/\s*```$/, "");
+        const result = object(JSON.parse(text));
+        assertProjectLantern(result["project"]);
+        assert.equal(result["port"], 4317);
+        t.diagnostic(
+          `${modelId} compacted with keepRecentTokens=${keepRecentTokens} after an interrupted tool call and recovered the synthetic facts.`,
+        );
+      },
+    );
+  }
+}
+
+for (const modelId of NEWEST_CLAUDE_MODELS) {
+  test(
+    `live ${modelId} continues after full-history compaction records a tool removal`,
+    {
+      skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+      timeout: 180000,
+    },
+    async (t) => {
+      const lookup = defineTool({
+        name: "lookup_value",
+        label: "Lookup",
+        description: "Look up a stored value by key.",
+        parameters: Type.Object({ key: Type.String() }),
+        async execute() {
+          return { content: [{ type: "text", text: "unused" }], details: {} };
+        },
+      });
+      const retired = defineTool({
+        name: "retired_report",
+        label: "Retired report",
+        description: "Report a value. Withdrawn during the conversation.",
+        parameters: Type.Object({ value: Type.String() }),
+        async execute() {
+          return { content: [{ type: "text", text: "unused" }], details: {} };
+        },
+      });
+      const { session, manager, requests } = await liveSession(t, modelId, {
+        customTools: [lookup, retired],
+        keepRecentTokens: 0,
+      });
+      await session.prompt(
+        "Remember these synthetic project facts: project Lantern, port 4317. Reply with only OK. Do not use tools.",
+      );
+      // Pi withdraws the tool with a removal in the conversation and keeps the first `tools` list.
+      session.setActiveToolsByName(
+        session.getActiveToolNames().filter((name) => name !== retired.name),
+      );
+      await session.prompt("Reply with only OK. Do not use tools.");
+      await session.compact("Preserve the exact synthetic project facts.");
+      assert.ok(requests.at(-1)?.["compaction"]);
+      const saved = activeCheckpoint(manager.getBranch());
+      assert.ok(saved);
+      // Anthropic records the removal's net effect in the signed block.
+      assert.deepEqual(
+        objects(saved.block["tool_changes"]).map((change) => [
+          change["type"],
+          object(change["tool"])["name"],
+        ]),
+        [["tool_removal", retired.name]],
+      );
+
+      await session.prompt(
+        "Return only JSON with project and port (number) from the earlier project facts. Do not use tools.",
+      );
+      const last = session.messages.at(-1);
+      assert.ok(
+        last?.role === "assistant" && last.stopReason === "stop",
+        "Expected a successful continuation.",
+      );
+      // The replayed request declares the removed tool again so the block can remove it.
+      assert.equal(
+        objects(requests.at(-1)?.["tools"]).filter((tool) => tool["name"] === retired.name).length,
+        1,
+      );
+      const text = last.content
+        .filter((item) => item.type === "text")
+        .map((item) => item.text)
+        .join("")
+        .trim()
+        .replace(/^```(?:json)?\s*/, "")
+        .replace(/\s*```$/, "");
+      const result = object(JSON.parse(text));
+      assertProjectLantern(result["project"]);
+      assert.equal(result["port"], 4317);
+      t.diagnostic(
+        `${modelId} continued after full-history compaction recorded a tool removal in the signed block.`,
+      );
+    },
+  );
+}
+
+for (const modelId of NEWEST_CLAUDE_MODELS) {
+  test(
+    `live ${modelId} publishes why native compaction was cancelled`,
+    {
+      skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+      timeout: 180000,
+    },
+    async (t) => {
+      const cancellations: unknown[] = [];
+      // No recorded request leaves this much recent history, so compaction cancels before any
+      // summary request.
+      const { session, requests } = await liveSession(t, modelId, {
+        keepRecentTokens: 200_000,
+        cancellations,
+      });
+      await session.prompt("Reply with only OK. Do not use tools.");
+      const turn = session.messages.at(-1);
+      assert.ok(turn?.role === "assistant" && turn.stopReason === "stop", "The turn must succeed.");
+      await assert.rejects(session.compact(), { message: "Compaction cancelled" });
+      assert.equal(
+        requests.some((request) => request["compaction"]),
+        false,
+      );
+      assert.deepEqual(cancellations, [
+        {
+          source: "pi-anthropic-compat",
+          reason:
+            "No recorded safe boundary satisfies native tail retention. History was preserved. Run more Anthropic turns or lower Native tail tokens.",
+        },
+      ]);
+      t.diagnostic(`${modelId} published the reason a native compaction was cancelled.`);
+    },
+  );
+}
 
 /**
  * A shell command run before the first prompt comes first in Pi's transcript, ahead of the system
@@ -806,7 +817,7 @@ async function enforcedReplay(send: typeof fetch, request: Request): Promise<Res
  * Run a shell command, a thinking turn, then a turn after `recall_code` was added. Pi's
  * mid-conversation tool changes define the tool inline only while `tools` stays fixed.
  */
-async function shellFirstToolChange(t: TestContext, compat: boolean) {
+async function shellFirstToolChange(t: TestContext, modelId: string, compat: boolean) {
   const recalled: string[] = [];
   const recall = defineTool({
     name: "recall_code",
@@ -820,7 +831,7 @@ async function shellFirstToolChange(t: TestContext, compat: boolean) {
   });
   // Enforced replay resends the second turn's complete request, which a thread continuation
   // does not carry. Pi sends complete requests whenever a thread cannot continue.
-  const live = await liveSession(t, "claude-sonnet-5-5", {
+  const live = await liveSession(t, modelId, {
     customTools: [recall],
     keepRecentTokens: 0,
     compat,
@@ -850,155 +861,161 @@ async function shellFirstToolChange(t: TestContext, compat: boolean) {
   return { ...live, recall, recalled, first, firstRequest, second, secondRequest, continuation };
 }
 
-test(
-  "live claude-sonnet-5-5 control: Pi's own provider loses the prompt cache and thinking at a tool change after a shell command before the first prompt",
-  {
-    skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
-    timeout: 180000,
-  },
-  async (t) => {
-    const run = await shellFirstToolChange(t, false);
-    // Pi sends the prompt inside the conversation and the current tools in `tools`.
-    assert.equal(promptMessages(run.firstRequest).length, 1);
-    assert.notDeepEqual(run.secondRequest["tools"], run.firstRequest["tools"]);
-    assert.ok(
-      run.second.usage.cacheRead < cachedPrefix(run.first),
-      `The control must miss the prompt cache: read ${run.second.usage.cacheRead} of ${cachedPrefix(run.first)} cached tokens.`,
-    );
-    const replay = await enforcedReplay(run.send, run.continuation);
-    assert.equal(replay.status, 400, "Enforced replay must reject the dropped thinking.");
-    const error = object(object(await replay.json())["error"]);
-    assert.equal(error["type"], "invalid_request_error");
-    assert.ok(
-      typeof error["message"] === "string" &&
-        /thinking/i.test(error["message"]) &&
-        /prefix|conversation/i.test(error["message"]),
-      "The rejection must come from the thinking-prefix check, not an unrelated validation.",
-    );
-    t.diagnostic(
-      `Control without the extension: the tool change read ${run.second.usage.cacheRead} of ${cachedPrefix(run.first)} cached tokens, and enforced replay rejected the earlier thinking.`,
-    );
-  },
-);
+for (const modelId of NEWEST_CLAUDE_MODELS) {
+  test(
+    `live ${modelId} control: Pi's own provider loses the prompt cache and thinking at a tool change after a shell command before the first prompt`,
+    {
+      skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+      timeout: 180000,
+    },
+    async (t) => {
+      const run = await shellFirstToolChange(t, modelId, false);
+      // Pi sends the prompt inside the conversation and the current tools in `tools`.
+      assert.equal(promptMessages(run.firstRequest).length, 1);
+      assert.notDeepEqual(run.secondRequest["tools"], run.firstRequest["tools"]);
+      assert.ok(
+        run.second.usage.cacheRead < cachedPrefix(run.first),
+        `The control must miss the prompt cache: read ${run.second.usage.cacheRead} of ${cachedPrefix(run.first)} cached tokens.`,
+      );
+      const replay = await enforcedReplay(run.send, run.continuation);
+      assert.equal(replay.status, 400, "Enforced replay must reject the dropped thinking.");
+      const error = object(object(await replay.json())["error"]);
+      assert.equal(error["type"], "invalid_request_error");
+      assert.ok(
+        typeof error["message"] === "string" &&
+          /thinking/i.test(error["message"]) &&
+          /prefix|conversation/i.test(error["message"]),
+        "The rejection must come from the thinking-prefix check, not an unrelated validation.",
+      );
+      t.diagnostic(
+        `Control without the extension: the tool change read ${run.second.usage.cacheRead} of ${cachedPrefix(run.first)} cached tokens, and enforced replay rejected the earlier thinking.`,
+      );
+    },
+  );
+}
 
-test(
-  "live claude-sonnet-5-5 keeps the prompt cache and thinking across a tool change after a shell command before the first prompt",
-  {
-    skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
-    timeout: 180000,
-  },
-  async (t) => {
-    const run = await shellFirstToolChange(t, true);
-    assert.equal(promptMessages(run.firstRequest).length, 0, "The prompt must lead in `system`.");
-    assert.equal(
-      objects(run.firstRequest["tools"]).at(-1)?.["name"],
-      "__pi_deferred_placeholder__",
-    );
-    assert.deepEqual(run.secondRequest["tools"], run.firstRequest["tools"]);
-    assert.deepEqual(inlineTools(run.secondRequest), [run.recall.name]);
-    assert.ok(
-      run.second.usage.cacheRead >= cachedPrefix(run.first),
-      `The tool change must keep the prompt cache: read ${run.second.usage.cacheRead} of ${cachedPrefix(run.first)} cached tokens.`,
-    );
-    const replay = await enforcedReplay(run.send, run.continuation);
-    assert.equal(replay.status, 200, "Enforced replay must accept the earlier thinking.");
-    await replay.body?.cancel();
-    assert.equal(
-      run.manager
-        .getBranch()
-        .filter((entry) => entry.type === "custom" && entry.customType === PROMPT_FIRST_TYPE)
-        .length,
-      1,
-    );
+for (const modelId of NEWEST_CLAUDE_MODELS) {
+  test(
+    `live ${modelId} keeps the prompt cache and thinking across a tool change after a shell command before the first prompt`,
+    {
+      skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+      timeout: 180000,
+    },
+    async (t) => {
+      const run = await shellFirstToolChange(t, modelId, true);
+      assert.equal(promptMessages(run.firstRequest).length, 0, "The prompt must lead in `system`.");
+      assert.equal(
+        objects(run.firstRequest["tools"]).at(-1)?.["name"],
+        "__pi_deferred_placeholder__",
+      );
+      assert.deepEqual(run.secondRequest["tools"], run.firstRequest["tools"]);
+      assert.deepEqual(inlineTools(run.secondRequest), [run.recall.name]);
+      assert.ok(
+        run.second.usage.cacheRead >= cachedPrefix(run.first),
+        `The tool change must keep the prompt cache: read ${run.second.usage.cacheRead} of ${cachedPrefix(run.first)} cached tokens.`,
+      );
+      const replay = await enforcedReplay(run.send, run.continuation);
+      assert.equal(replay.status, 200, "Enforced replay must accept the earlier thinking.");
+      await replay.body?.cancel();
+      assert.equal(
+        run.manager
+          .getBranch()
+          .filter((entry) => entry.type === "custom" && entry.customType === PROMPT_FIRST_TYPE)
+          .length,
+        1,
+      );
 
-    const compacted = await run.session.compact("Preserve the synthetic project name.");
-    const summaryCacheRead = compacted.usage?.cacheRead ?? 0;
-    assert.ok(
-      summaryCacheRead >= cachedPrefix(run.second),
-      `The summary request must reuse the turns' cache: read ${summaryCacheRead} of ${cachedPrefix(run.second)} cached tokens.`,
-    );
-    // The summary request repeats the turns, including the inline tool, so it shares their prefix.
-    const summary = run.requests.at(-1);
-    assert.ok(summary?.["compaction"]);
-    assert.equal(
-      fingerprint(summary["system"] ?? null),
-      fingerprint(run.secondRequest["system"] ?? null),
-      "The summary request must send the turns' system prompt.",
-    );
-    assert.deepEqual(summary["tools"], run.secondRequest["tools"]);
-    const turns = objects(run.secondRequest["messages"]);
-    assert.equal(
-      messageHash(objects(summary["messages"]).slice(0, turns.length)),
-      messageHash(turns),
-      "The summary request must start with the last turn's messages.",
-    );
-    await run.session.prompt(
-      "Call recall_code once with the project name from the shell output, then reply with only the verification code it returns.",
-    );
-    const last = lastResponse(run.session, "continuation");
-    assert.equal(run.recalled.length, 1, "Expected exactly one recall_code call.");
-    assertProjectLantern(run.recalled[0]);
-    assert.match(
-      last.content
-        .filter((item) => item.type === "text")
-        .map((item) => item.text)
-        .join(""),
-      /7341/,
-    );
-    t.diagnostic(
-      `The tool change read ${run.second.usage.cacheRead} of ${cachedPrefix(run.first)} cached tokens, enforced replay accepted the earlier thinking, and the summary request read ${summaryCacheRead} of ${cachedPrefix(run.second)}.`,
-    );
-  },
-);
+      const compacted = await run.session.compact("Preserve the synthetic project name.");
+      const summaryCacheRead = compacted.usage?.cacheRead ?? 0;
+      assert.ok(
+        summaryCacheRead >= cachedPrefix(run.second),
+        `The summary request must reuse the turns' cache: read ${summaryCacheRead} of ${cachedPrefix(run.second)} cached tokens.`,
+      );
+      // The summary request repeats the turns, including the inline tool, so it shares their prefix.
+      const summary = run.requests.at(-1);
+      assert.ok(summary?.["compaction"]);
+      assert.equal(
+        fingerprint(summary["system"] ?? null),
+        fingerprint(run.secondRequest["system"] ?? null),
+        "The summary request must send the turns' system prompt.",
+      );
+      assert.deepEqual(summary["tools"], run.secondRequest["tools"]);
+      const turns = objects(run.secondRequest["messages"]);
+      assert.equal(
+        messageHash(objects(summary["messages"]).slice(0, turns.length)),
+        messageHash(turns),
+        "The summary request must start with the last turn's messages.",
+      );
+      await run.session.prompt(
+        "Call recall_code once with the project name from the shell output, then reply with only the verification code it returns.",
+      );
+      const last = lastResponse(run.session, "continuation");
+      assert.equal(run.recalled.length, 1, "Expected exactly one recall_code call.");
+      assertProjectLantern(run.recalled[0]);
+      assert.match(
+        last.content
+          .filter((item) => item.type === "text")
+          .map((item) => item.text)
+          .join(""),
+        /7341/,
+      );
+      t.diagnostic(
+        `The tool change read ${run.second.usage.cacheRead} of ${cachedPrefix(run.first)} cached tokens, enforced replay accepted the earlier thinking, and the summary request read ${summaryCacheRead} of ${cachedPrefix(run.second)}.`,
+      );
+    },
+  );
+}
 
-test(
-  "live claude-sonnet-5-5 keep-tail compaction retains signed thinking after a shell command before the first prompt",
-  {
-    skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
-    timeout: 180000,
-  },
-  async (t) => {
-    const { session, manager, requests } = await liveSession(t, "claude-sonnet-5-5", {
-      keepRecentTokens: 1,
-    });
-    await runShellCommand(session);
-    await session.prompt(SHELL_FIRST_PROMPT);
-    const first = lastResponse(session, "first");
-    assert.ok(
-      signedThinking(first),
-      "Actual signed thinking is required. A successful response without thinking proves nothing.",
-    );
-    const turn = requests.at(-1);
-    assert.ok(turn);
-    assert.equal(promptMessages(turn).length, 0, "The prompt must lead in `system`.");
+for (const modelId of NEWEST_CLAUDE_MODELS) {
+  test(
+    `live ${modelId} keep-tail compaction retains signed thinking after a shell command before the first prompt`,
+    {
+      skip: process.env["PI_ANTHROPIC_LIVE_TEST"] !== "1",
+      timeout: 180000,
+    },
+    async (t) => {
+      const { session, manager, requests } = await liveSession(t, modelId, {
+        keepRecentTokens: 1,
+      });
+      await runShellCommand(session);
+      await session.prompt(SHELL_FIRST_PROMPT);
+      const first = lastResponse(session, "first");
+      assert.ok(
+        signedThinking(first),
+        "Actual signed thinking is required. A successful response without thinking proves nothing.",
+      );
+      const turn = requests.at(-1);
+      assert.ok(turn);
+      assert.equal(promptMessages(turn).length, 0, "The prompt must lead in `system`.");
 
-    await session.compact("Preserve the synthetic project name.");
-    const saved = activeCheckpoint(manager.getBranch());
-    assert.ok(saved?.retained, "Keep-tail compaction must retain the recent response.");
-    assert.ok(
-      saved.retained.messages.some((message) =>
-        objects(message["content"]).some(
-          (item) =>
-            item["type"] === "thinking" &&
-            typeof item["signature"] === "string" &&
-            item["signature"].length > 0,
+      await session.compact("Preserve the synthetic project name.");
+      const saved = activeCheckpoint(manager.getBranch());
+      assert.ok(saved?.retained, "Keep-tail compaction must retain the recent response.");
+      assert.ok(
+        saved.retained.messages.some((message) =>
+          objects(message["content"]).some(
+            (item) =>
+              item["type"] === "thinking" &&
+              typeof item["signature"] === "string" &&
+              item["signature"].length > 0,
+          ),
         ),
-      ),
-      "The retained native tail must contain the original thinking.",
-    );
-    await session.prompt(
-      "Reply with only the synthetic project name from the shell output. Do not use tools.",
-    );
-    const last = lastResponse(session, "continuation");
-    assert.match(
-      last.content
-        .filter((item) => item.type === "text")
-        .map((item) => item.text)
-        .join(""),
-      /Lantern/i,
-    );
-    t.diagnostic(
-      "claude-sonnet-5-5 retained signed thinking through keep-tail compaction after a shell command before the first prompt.",
-    );
-  },
-);
+        "The retained native tail must contain the original thinking.",
+      );
+      await session.prompt(
+        "Reply with only the synthetic project name from the shell output. Do not use tools.",
+      );
+      const last = lastResponse(session, "continuation");
+      assert.match(
+        last.content
+          .filter((item) => item.type === "text")
+          .map((item) => item.text)
+          .join(""),
+        /Lantern/i,
+      );
+      t.diagnostic(
+        `${modelId} retained signed thinking through keep-tail compaction after a shell command before the first prompt.`,
+      );
+    },
+  );
+}
