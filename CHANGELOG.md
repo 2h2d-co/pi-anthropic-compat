@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Require Pi `>=1.6.1 <1.7.0`.
+
+### Fixed
+
+- Record a request as a native compaction boundary only after Anthropic accepts it. Pi 1.6.1 also
+  reports failed and retried attempts to extensions, so a strict tool set Anthropic rejected, or a
+  request that failed, was recorded as if Anthropic had accepted it.
+
 ## [0.0.23] - 2026-11-20
 
 ### Changed

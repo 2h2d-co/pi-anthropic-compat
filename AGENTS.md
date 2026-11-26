@@ -37,3 +37,4 @@
 - Keep tests in `test/*.test.ts`, code that tests import or load into Pi in `test/support/`, and test data in `test/fixtures/`.
 - Pi continues Anthropic message threads after `onPayload`, so the extension records complete requests. Anthropic rejects a thread over a signed compaction block, so turns that replay a checkpoint pass `disableContinuation`. Offline tests that inspect request bodies turn threads off through an isolated `models.json`; live tests keep Pi's default unless they resend a complete request.
 - Detect Pi's strict-tool downgrade by comparing the tools Pi would declare strict with the last accepted request's template. Pi remembers a rejection per session in memory, so later turns carry no fallback diagnostic.
+- Record a request template and boundary only when `onResponse` reports a 2xx status. Pi also calls `onResponse` for failed and retried attempts.

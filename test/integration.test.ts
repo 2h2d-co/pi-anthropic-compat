@@ -107,6 +107,10 @@ async function setup(
     summaryBlock?: JsonObject;
     /** Answer this many summary requests with Anthropic's transient compaction failure. */
     unavailableSummaries?: number;
+    /** Answer this many agent-turn requests with HTTP 529 `overloaded_error`. */
+    overloadedTurns?: number;
+    /** Pi's provider-level retries per request. Default: 0. */
+    providerRetries?: number;
     /** Collect extension notifications. */
     notices?: string[];
     /** Collect the payloads published on the compaction-cancelled channel. */
@@ -137,6 +141,7 @@ async function setup(
   });
   const requests: JsonObject[] = [];
   let unavailable = 0;
+  let overloaded = 0;
   let ordinary = 0;
   let contextWindow = model.contextWindow;
   let onSummary: (() => void) | undefined;
@@ -198,6 +203,13 @@ async function setup(
         content: [options.summaryBlock ?? block],
       });
     }
+    if ((options.overloadedTurns ?? 0) > overloaded) {
+      overloaded++;
+      return Response.json(
+        { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+        { status: 529, headers: { "retry-after": "0" } },
+      );
+    }
     ordinary++;
     return textResponse(
       options.automatic && ordinary === 1 ? contextWindow - 1024 : 100,
@@ -223,7 +235,7 @@ async function setup(
         keepRecentTokens: 1,
         reserveTokens: 16384,
       },
-      retry: { enabled: false, provider: { maxRetries: 0 } },
+      retry: { enabled: false, provider: { maxRetries: options.providerRetries ?? 0 } },
       ...(options.codemode ? { codemode: { mode: options.codemode } } : {}),
     });
     const loader = new DefaultResourceLoader({
@@ -685,6 +697,49 @@ test("a turn Pi retries without strict tools records only the accepted request",
     hasStrictTool(object(activeTemplate(manager.getBranch(), "claude-opus-5-5"))),
     false,
   );
+});
+
+test("a request Anthropic rejects records no template or request boundary", async (t) => {
+  const { session, manager, requests } = await setup(t, {
+    modelId: "claude-opus-5-5",
+    managed: true,
+    overloadedTurns: 1,
+  });
+  const custom = (type: string) =>
+    manager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === type);
+  await session.prompt("Remember the synthetic project Lantern.");
+  const failed = session.messages.at(-1);
+  assert.ok(failed?.role === "assistant" && failed.stopReason === "error");
+  assert.equal(requests.length, 1);
+  assert.equal(custom(TEMPLATE_TYPE).length, 0);
+  assert.equal(custom(REQUEST_TYPE).length, 0);
+  await session.prompt("Continue.");
+  assert.equal(requests.length, 2);
+  assert.equal(custom(TEMPLATE_TYPE).length, 1);
+  assert.equal(custom(REQUEST_TYPE).length, 1);
+});
+
+test("a request Pi retries after an overloaded response records its boundary once", async (t) => {
+  const { session, manager, requests } = await setup(t, {
+    modelId: "claude-opus-5-5",
+    managed: true,
+    overloadedTurns: 1,
+    providerRetries: 1,
+  });
+  await session.prompt("Remember the synthetic project Lantern.");
+  const last = session.messages.at(-1);
+  assert.ok(last?.role === "assistant" && last.stopReason === "stop");
+  assert.equal(requests.length, 2);
+  const custom = (type: string) =>
+    manager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === type);
+  assert.equal(custom(TEMPLATE_TYPE).length, 1);
+  const boundaries = custom(REQUEST_TYPE);
+  assert.equal(boundaries.length, 1);
+  const [boundary] = boundaries;
+  assert.ok(boundary?.type === "custom");
+  const accepted = requests[1];
+  assert.ok(accepted);
+  assert.equal(object(boundary.data)["templateHash"], fingerprint(bindingTemplate(accepted)));
 });
 
 for (const keepRecentTokens of [0, 1]) {

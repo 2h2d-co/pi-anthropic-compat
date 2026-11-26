@@ -336,9 +336,13 @@ export function registerCompatibility(pi: ExtensionAPI, fetcher = fetch): void {
           return final;
         },
         onResponse: async (response, selected) => {
-          const accepted = record;
-          record = undefined;
-          accepted?.();
+          // Pi also reports failed attempts here, before it retries or resends the request
+          // non-strict. Only a successful response means Anthropic accepted this request.
+          if (response.status >= 200 && response.status < 300) {
+            const accepted = record;
+            record = undefined;
+            accepted?.();
+          }
           await options?.onResponse?.(response, selected);
         },
       });
